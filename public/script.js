@@ -1013,14 +1013,23 @@ class PomodoroTimer {
             this.elements.aiChatMessages : this.elements.roomChatMessages;
 
         const messageWrapper = document.createElement('div');
-        messageWrapper.className = `message-wrapper ${messageType}-message`;
 
+        // 确定消息类型和对齐方式
+        let wrapperClass = `message-wrapper ${messageType}-message`;
         let avatarEmoji = '👤';
-        if (messageType === 'ai') {
+
+        if (type === 'room') {
+            // 自习室消息：区分自己和其他人的消息
+            const isOwnMessage = sender === this.username;
+            wrapperClass += isOwnMessage ? ' own-message' : ' other-message';
+            avatarEmoji = isOwnMessage ? '😊' : '👤';
+        } else if (messageType === 'ai') {
             avatarEmoji = '🤖';
         } else if (messageType === 'system') {
             avatarEmoji = '💬';
         }
+
+        messageWrapper.className = wrapperClass;
 
         if (type === 'ai') {
             messageWrapper.innerHTML = `
