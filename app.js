@@ -3,6 +3,8 @@ const cors = require('cors');
 const db = require('./database');
 const http = require('http');
 const socketIo = require('socket.io');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const app = express();
@@ -228,6 +230,141 @@ app.delete('/api/sessions/:id', (req, res) => {
         res.json({ message: '记录删除成功' });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// === JWT认证中间件 ===
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+    if (!token) {
+        return res.status(401).json({ error: '访问令牌缺失' });
+    }
+
+    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+        if (err) {
+            return res.status(403).json({ error: '无效的访问令牌' });
+        }
+        req.user = user;
+        next();
+    });
+};
+
+// === 用户认证API ===
+
+// 用户注册
+app.post('/api/auth/register', async (req, res) => {
+    const { username, email, password } = req.body;
+
+    if (!username || !email || !password) {
+        return res.status(400).json({ error: '用户名、邮箱和密码都是必填项' });
+    }
+
+    if (password.length < 6) {
+        return res.status(400).json({ error: '密码长度至少为6位' });
+    }
+
+    try {
+        // 检查用户名是否已存在
+        const existingUser = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+        if (existingUser) {
+            return res.status(400).json({ error: '用户名已存在' });
+        }
+
+        // 检查邮箱是否已存在
+        const existingEmail = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+        if (existingEmail) {
+            return res.status(400).json({ error: '邮箱已被注册' });
+        }
+
+        // 加密密码
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+        // 创建用户
+        const stmt = db.prepare(`
+            INSERT INTO users (username, email, password_hash)
+            VALUES (?, ?, ?)
+        `);
+
+        const result = stmt.run(username, email, hashedPassword);
+        const userId = result.lastInsertRowid;
+
+        // 生成JWT token
+        const token = jwt.sign(
+            { id: userId, username, email },
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        res.json({
+            message: '注册成功',
+            token,
+            user: { id: userId, username, email }
+        });
+
+    } catch (error) {
+        console.error('注册错误:', error);
+        res.status(500).json({ error: '注册失败，请稍后重试' });
+    }
+});
+
+// 用户登录
+app.post('/api/auth/login', async (req, res) => {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+        return res.status(400).json({ error: '用户名和密码都是必填项' });
+    }
+
+    try {
+        // 查找用户
+        const user = db.prepare('SELECT * FROM users WHERE username = ? OR email = ?').get(username, username);
+        if (!user) {
+            return res.status(401).json({ error: '用户名或密码错误' });
+        }
+
+        // 验证密码
+        const isValidPassword = await bcrypt.compare(password, user.password_hash);
+        if (!isValidPassword) {
+            return res.status(401).json({ error: '用户名或密码错误' });
+        }
+
+        // 生成JWT token
+        const token = jwt.sign(
+            { id: user.id, username: user.username, email: user.email },
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        res.json({
+            message: '登录成功',
+            token,
+            user: { id: user.id, username: user.username, email: user.email }
+        });
+
+    } catch (error) {
+        console.error('登录错误:', error);
+        res.status(500).json({ error: '登录失败，请稍后重试' });
+    }
+});
+
+// 获取用户资料
+app.get('/api/auth/profile', authenticateToken, (req, res) => {
+    try {
+        const user = db.prepare('SELECT id, username, email, created_at FROM users WHERE id = ?').get(req.user.id);
+        if (!user) {
+            return res.status(404).json({ error: '用户不存在' });
+        }
+
+        res.json({
+            message: '获取用户资料成功',
+            user
+        });
+    } catch (error) {
+        console.error('获取用户资料错误:', error);
+        res.status(500).json({ error: '获取用户资料失败' });
     }
 });
 
