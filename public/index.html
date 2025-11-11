@@ -15,15 +15,36 @@
 <body>
     <div class="container">  <!-- 主容器，包含整个页面的内容 -->
         <header>  <!-- 页面头部 -->
-            <h1>🍅 智能番茄钟学习辅助系统</h1>  <!-- 系统标题 -->
+            <div class="header-content">
+                <h1>🍅 智能番茄钟学习辅助系统</h1>  <!-- 系统标题 -->
+                <p class="header-subtitle">让学习更高效，让专注更有趣</p>
+            </div>
             <nav class="main-nav">  <!-- 主导航栏 -->
                 <!-- 导航按钮组，用于切换不同的功能页面 -->
-                <button class="nav-btn active" data-page="pomodoro">🍅 番茄钟</button>
-                <button class="nav-btn" data-page="ai">🤖 AI学习伙伴</button>
-                <button class="nav-btn" data-page="studyroom">👥 虚拟自习室</button>
-                <button class="nav-btn" data-page="todo">📋 待办事项</button>
-                <button class="nav-btn" data-page="stats">📊 数据统计</button>
-                <button class="nav-btn" data-page="profile">👤 个人中心</button>
+                <button class="nav-btn active" data-page="pomodoro">
+                    <span class="nav-icon">🍅</span>
+                    <span class="nav-text">番茄钟</span>
+                </button>
+                <button class="nav-btn" data-page="ai">
+                    <span class="nav-icon">🤖</span>
+                    <span class="nav-text">AI学习伙伴</span>
+                </button>
+                <button class="nav-btn" data-page="studyroom">
+                    <span class="nav-icon">👥</span>
+                    <span class="nav-text">虚拟自习室</span>
+                </button>
+                <button class="nav-btn" data-page="todo">
+                    <span class="nav-icon">📋</span>
+                    <span class="nav-text">待办事项</span>
+                </button>
+                <button class="nav-btn" data-page="stats">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-text">数据统计</span>
+                </button>
+                <button class="nav-btn" data-page="profile">
+                    <span class="nav-icon">👤</span>
+                    <span class="nav-text">个人中心</span>
+                </button>
             </nav>
         </header>
 
@@ -71,24 +92,49 @@
         
             <!-- AI学习伙伴页面 -->
             <div id="ai-page" class="page">  <!-- AI学习伙伴功能页面 -->
-                <div class="ai-full-container">  <!-- AI聊天容器 -->
-                    <h2>🤖 AI学习伙伴</h2>  <!-- AI伙伴标题 -->
-                    <div class="ai-chat-full">  <!-- AI聊天区域 -->
-                        <div id="ai-chat-messages" class="ai-chat-messages">  <!-- 聊天消息区域 -->
-                            <!-- 系统欢迎消息 -->
-                            <div class="ai-message ai-system">
+                <div class="ai-chat-container">  <!-- AI聊天容器 -->
+                    <div class="ai-chat-header">
+                        <div class="ai-avatar">
+                            <span class="ai-avatar-icon">🤖</span>
+                        </div>
+                        <div class="ai-info">
+                            <h2>AI学习伙伴</h2>
+                            <p>在线为您提供学习建议和帮助</p>
+                        </div>
+                    </div>
+
+                    <div class="ai-chat-messages" id="ai-chat-messages">  <!-- 聊天消息区域 -->
+                        <!-- 系统欢迎消息 -->
+                        <div class="message-wrapper system-message">
+                            <div class="message-bubble system-bubble">
                                 <div class="message-content">你好！我是你的AI学习伙伴，可以帮你制定学习计划、解答问题或提供学习建议。</div>
-                                <div class="message-time">系统</div>
+                                <div class="message-time">系统消息</div>
                             </div>
                         </div>
-                        <div class="ai-input-full">  <!-- AI输入区域 -->
-                            <input type="text" id="ai-message-input" placeholder="向AI学习伙伴提问..." maxlength="200">  <!-- 消息输入框 -->
-                            <button id="ai-send-btn" class="btn btn-primary">发送</button>
+                    </div>
+
+                    <div class="ai-chat-input-area">  <!-- AI输入区域 -->
+                        <div class="ai-quick-actions">
+                            <button class="quick-action-btn" data-prompt="帮我制定今天的学习计划">
+                                <span class="action-icon">📝</span>
+                                <span class="action-text">学习计划</span>
+                            </button>
+                            <button class="quick-action-btn" data-prompt="解释番茄工作法的原理">
+                                <span class="action-icon">🍅</span>
+                                <span class="action-text">方法解释</span>
+                            </button>
+                            <button class="quick-action-btn" data-prompt="如何提高学习专注力？">
+                                <span class="action-icon">💡</span>
+                                <span class="action-text">专注技巧</span>
+                            </button>
                         </div>
-                        <div class="ai-quick-actions-full">
-                            <button class="quick-action-btn" data-prompt="帮我制定今天的学习计划">📝 学习计划</button>
-                            <button class="quick-action-btn" data-prompt="解释番茄工作法的原理">🍅 方法解释</button>
-                            <button class="quick-action-btn" data-prompt="如何提高学习专注力？">💡 专注技巧</button>
+
+                        <div class="ai-input-wrapper">
+                            <input type="text" id="ai-message-input" placeholder="向AI学习伙伴提问..." maxlength="200">
+                            <button id="ai-send-btn" class="btn btn-primary send-btn">
+                                <span class="send-icon">📤</span>
+                                <span class="send-text">发送</span>
+                            </button>
                         </div>
                     </div>
                 </div>

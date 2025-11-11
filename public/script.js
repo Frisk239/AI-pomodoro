@@ -234,9 +234,8 @@ class PomodoroTimer {
         
         this.elements.quickActionBtns.forEach(btn => {
             btn.addEventListener('click', (e) => {
-                const prompt = e.target.getAttribute('data-prompt');
-                this.elements.aiMessageInput.value = prompt;
-                this.sendAIMessage();
+                const prompt = e.currentTarget.getAttribute('data-prompt');
+                this.sendQuickMessage(prompt);
             });
         });
         
@@ -779,6 +778,72 @@ class PomodoroTimer {
 	        });
 	    }
 	    
+	    // 发送预设消息（避免竞态条件）
+	    async sendQuickMessage(message) {
+	        if (!message) return;
+
+	        // 添加用户消息到聊天界面
+	        this.addChatMessage('你', message, new Date().toLocaleTimeString(), 'ai');
+
+	        // 禁用发送按钮防止重复发送
+	        this.elements.aiSendBtn.disabled = true;
+	        this.elements.aiSendBtn.textContent = '发送中...';
+
+	        // 显示正在输入指示器
+	        this.showTypingIndicator('ai');
+
+	        try {
+	            // 添加超时控制
+	            const timeoutPromise = new Promise((_, reject) =>
+	                setTimeout(() => reject(new Error('请求超时')), 20000)
+	            );
+
+	            const fetchPromise = fetch(this.API_ENDPOINTS.CHAT, {
+	                method: 'POST',
+	                headers: {
+	                    'Content-Type': 'application/json',
+	                },
+	                body: JSON.stringify({
+	                    message: message
+	                })
+	            });
+
+	            const response = await Promise.race([fetchPromise, timeoutPromise]);
+	            const result = await response.json();
+
+	            // 移除输入指示器
+	            this.hideTypingIndicator('ai');
+
+	            // 恢复发送按钮
+	            this.elements.aiSendBtn.disabled = false;
+	            this.elements.aiSendBtn.textContent = '发送';
+
+	            if (result.success) {
+	                this.addChatMessage('AI学习伙伴', result.reply, result.timestamp, 'ai', 'ai');
+	            } else {
+	                this.addChatMessage('系统', result.reply, result.timestamp, 'ai', 'system');
+	                this.showNotification('AI服务暂时不可用', 'error');
+	            }
+	        } catch (error) {
+	            // 移除输入指示器
+	            this.hideTypingIndicator('ai');
+
+	            // 恢复发送按钮
+	            this.elements.aiSendBtn.disabled = false;
+	            this.elements.aiSendBtn.textContent = '发送';
+
+	            console.error('AI聊天错误:', error);
+
+	            let errorMessage = '网络错误，请检查连接后重试';
+	            if (error.message === '请求超时') {
+	                errorMessage = '请求超时，请稍后重试或简化问题';
+	            }
+
+	            this.addChatMessage('系统', errorMessage, new Date().toLocaleTimeString(), 'ai', 'system');
+	            this.showNotification('AI服务响应超时', 'error');
+	        }
+	    }
+
 	    // === AI学习伙伴功能 - 优化版本 ===
 	    async sendAIMessage() {
 	        const message = this.elements.aiMessageInput.value.trim();
@@ -821,12 +886,12 @@ class PomodoroTimer {
 	            this.elements.aiSendBtn.disabled = false;
 	            this.elements.aiSendBtn.textContent = '发送';
 	            
-	            if (result.success) {
-	                this.addChatMessage('AI学习伙伴', result.reply, result.timestamp, 'ai', 'system');
-	            } else {
-	                this.addChatMessage('系统', result.reply, result.timestamp, 'ai', 'system');
-	                this.showNotification('AI服务暂时不可用', 'error');
-	            }
+            if (result.success) {
+                this.addChatMessage('AI学习伙伴', result.reply, result.timestamp, 'ai', 'ai');
+            } else {
+                this.addChatMessage('系统', result.reply, result.timestamp, 'ai', 'system');
+                this.showNotification('AI服务暂时不可用', 'error');
+            }
 	        } catch (error) {
 	            // 移除输入指示器
 	            this.hideTypingIndicator('ai');
@@ -914,11 +979,15 @@ class PomodoroTimer {
 	            alert('请输入昵称');
 	            return;
 	        }
-	        
-	        // 生成随机房间ID
-	        const roomId = 'room-' + Math.random().toString(36).substr(2, 8);
-	        this.elements.roomIdInput.value = roomId;
-	        
+
+	        // 检查用户是否输入了房间ID，如果没有则生成随机ID
+	        let roomId = this.elements.roomIdInput.value.trim();
+	        if (!roomId) {
+	            // 生成随机房间ID
+	            roomId = 'room-' + Math.random().toString(36).substr(2, 8);
+	            this.elements.roomIdInput.value = roomId;
+	        }
+
 	        this.joinRoom();
 	    }
 	    
@@ -938,54 +1007,86 @@ class PomodoroTimer {
 	        this.elements.roomMessageInput.value = '';
 	    }
 	    
-	    // === 通用聊天功能 ===
-	    addChatMessage(sender, message, timestamp, type, messageType = 'user') {
-	        const messagesContainer = type === 'ai' ? 
-	            this.elements.aiChatMessages : this.elements.roomChatMessages;
-	        
-	        const messageEl = document.createElement('div');
-	        messageEl.className = type === 'ai' ? 
-	            `ai-message ai-${messageType}` : 'room-message';
-	        
-	        if (type === 'ai') {
-	            messageEl.innerHTML = `
-	                <div class="message-content">${this.escapeHtml(message)}</div>
-	                <div class="message-time">${timestamp}</div>
-	            `;
-	        } else {
-	            messageEl.innerHTML = `
-	                <div class="message-username">${sender}</div>
-	                <div class="message-text">${this.escapeHtml(message)}</div>
-	                <div class="message-timestamp">${timestamp}</div>
-	            `;
-	        }
-	        
-	        messagesContainer.appendChild(messageEl);
-	        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-	    }
+    // === 通用聊天功能 ===
+    addChatMessage(sender, message, timestamp, type, messageType = 'user') {
+        const messagesContainer = type === 'ai' ?
+            this.elements.aiChatMessages : this.elements.roomChatMessages;
+
+        const messageWrapper = document.createElement('div');
+        messageWrapper.className = `message-wrapper ${messageType}-message`;
+
+        let avatarEmoji = '👤';
+        if (messageType === 'ai') {
+            avatarEmoji = '🤖';
+        } else if (messageType === 'system') {
+            avatarEmoji = '💬';
+        }
+
+        if (type === 'ai') {
+            messageWrapper.innerHTML = `
+                <div class="message-avatar">${avatarEmoji}</div>
+                <div class="message-bubble">
+                    <div class="message-content">${this.escapeHtml(message)}</div>
+                    <div class="message-time">${timestamp}</div>
+                </div>
+            `;
+        } else {
+            // 自习室消息
+            messageWrapper.innerHTML = `
+                <div class="message-avatar">${avatarEmoji}</div>
+                <div class="message-bubble">
+                    <div class="message-username">${sender}</div>
+                    <div class="message-content">${this.escapeHtml(message)}</div>
+                    <div class="message-time">${timestamp}</div>
+                </div>
+            `;
+        }
+
+        messagesContainer.appendChild(messageWrapper);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
 	    
 	    addSystemMessage(message, type) {
-	        const messagesContainer = type === 'ai' ? 
+	        const messagesContainer = type === 'ai' ?
 	            this.elements.aiChatMessages : this.elements.roomChatMessages;
-	        
-	        const messageEl = document.createElement('div');
-	        messageEl.className = type === 'ai' ? 'ai-message ai-system' : 'room-message system-message';
-	        messageEl.textContent = message;
-	        
-	        messagesContainer.appendChild(messageEl);
+
+	        const messageWrapper = document.createElement('div');
+	        messageWrapper.className = 'message-wrapper system-message';
+
+	        messageWrapper.innerHTML = `
+	            <div class="message-bubble system-bubble">
+	                <div class="message-content">${this.escapeHtml(message)}</div>
+	                <div class="message-time">${new Date().toLocaleTimeString()}</div>
+	            </div>
+	        `;
+
+	        messagesContainer.appendChild(messageWrapper);
 	        messagesContainer.scrollTop = messagesContainer.scrollHeight;
 	    }
 	    
 	    showTypingIndicator(type) {
-	        const messagesContainer = type === 'ai' ? 
+	        const messagesContainer = type === 'ai' ?
 	            this.elements.aiChatMessages : this.elements.roomChatMessages;
-	        
-	        const indicator = document.createElement('div');
-	        indicator.className = 'typing-indicator';
-	        indicator.id = `${type}-typing`;
-	        indicator.textContent = 'AI正在思考...';
-	        
-	        messagesContainer.appendChild(indicator);
+
+	        const messageWrapper = document.createElement('div');
+	        messageWrapper.className = 'message-wrapper ai-message';
+
+	        messageWrapper.innerHTML = `
+	            <div class="message-avatar">🤖</div>
+	            <div class="message-bubble">
+	                <div class="typing-indicator">
+	                    <div class="typing-dots">
+	                        <span></span>
+	                        <span></span>
+	                        <span></span>
+	                    </div>
+	                    <div class="typing-text">AI正在思考...</div>
+	                </div>
+	            </div>
+	        `;
+
+	        messageWrapper.id = `${type}-typing`;
+	        messagesContainer.appendChild(messageWrapper);
 	        messagesContainer.scrollTop = messagesContainer.scrollHeight;
 	    }
 	    
