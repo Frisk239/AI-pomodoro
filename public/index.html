@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+
+    <!-- 页面元数据设置 -->
+    <meta charset="UTF-8">  <!-- 设置字符编码为UTF-8，支持中文显示 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">  <!-- 响应式视口设置，确保在移动设备上正确显示 -->
+    <title>CAI</title>  <!-- 页面标题 -->
+    <link rel="stylesheet" href="style.css">  <!-- 引入外部CSS样式表 -->
+    <!-- 引入Socket.IO客户端库，用于实现实时通信功能 -->
+    <script src="/socket.io/socket.io.js"></script>
+    <!-- 引入Chart.js库，用于数据可视化 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">  <!-- 主容器，包含整个页面的内容 -->
+        <header>  <!-- 页面头部 -->
+            <h1>🍅 智能番茄钟学习辅助系统</h1>  <!-- 系统标题 -->
+            <nav class="main-nav">  <!-- 主导航栏 -->
+                <!-- 导航按钮组，用于切换不同的功能页面 -->
+                <button class="nav-btn active" data-page="pomodoro">🍅 番茄钟</button>
+                <button class="nav-btn" data-page="ai">🤖 AI学习伙伴</button>
+                <button class="nav-btn" data-page="studyroom">👥 虚拟自习室</button>
+                <button class="nav-btn" data-page="todo">📋 待办事项</button>
+                <button class="nav-btn" data-page="stats">📊 数据统计</button>
+            </nav>
+        </header>
+
+        <main>  <!-- 页面主体内容 -->
+            <!-- 番茄钟页面 -->
+            <div id="pomodoro-page" class="page active">  <!-- 番茄钟功能页面，默认激活 -->
+                <div class="timer-container">  <!-- 计时器容器 -->
+                    <div class="timer-circle">  <!-- 圆形计时器显示区域 -->
+                        <!-- SVG环形进度条 -->
+                        <svg class="progress-ring" width="300" height="300">
+                            <circle class="progress-ring-circle" stroke-width="8" fill="transparent" r="140" cx="150" cy="150"/>
+                        </svg>
+                        <div class="timer-display">  <!-- 计时器显示区域 -->
+                            <div id="time-display">25:00</div>  <!-- 时间显示 -->
+                            <div id="session-type">工作时段</div>  <!-- 会话类型显示 -->
+                        </div>
+                    </div>
+                    
+                    <div class="task-input">  <!-- 任务输入区域 -->
+                        <input type="text" id="task-input" placeholder="请输入当前任务..." maxlength="50">  <!-- 任务输入框 -->
+                        <span id="task-length">0/50</span>  <!-- 字符计数器 -->
+                    </div>
+        
+                    <div class="controls">  <!-- 控制按钮区域 -->
+                        <button id="start-btn" class="btn btn-primary">开始</button>  <!-- 开始按钮 -->
+                        <button id="pause-btn" class="btn btn-secondary" disabled>暂停</button>  <!-- 暂停按钮 -->
+                        <button id="reset-btn" class="btn btn-secondary">重置</button>  <!-- 重置按钮 -->
+                        <button id="skip-btn" class="btn btn-outline">跳过</button>  <!-- 跳过按钮 -->
+                    </div>
+                </div>
+        
+                <div class="todays-stats">  <!-- 今日统计区域 -->
+                    <div class="stat-badge">  <!-- 统计徽章 -->
+                        <span class="stat-label">今日完成</span>  <!-- 统计标签 -->
+                        <span class="stat-value" id="today-sessions-count">0</span>  <!-- 统计数值 -->
+                        <span class="stat-unit">个番茄</span>  <!-- 统计单位 -->
+                    </div>
+                    <div class="stat-badge">  <!-- 统计徽章 -->
+                        <span class="stat-label">累计专注</span>  <!-- 统计标签 -->
+                        <span class="stat-value" id="total-sessions-count">0</span>  <!-- 统计数值 -->
+                        <span class="stat-unit">分钟</span>  <!-- 统计单位 -->
+                    </div>
+                </div>
+            </div>
+        
+            <!-- AI学习伙伴页面 -->
+            <div id="ai-page" class="page">  <!-- AI学习伙伴功能页面 -->
+                <div class="ai-full-container">  <!-- AI聊天容器 -->
+                    <h2>🤖 AI学习伙伴</h2>  <!-- AI伙伴标题 -->
+                    <div class="ai-chat-full">  <!-- AI聊天区域 -->
+                        <div id="ai-chat-messages" class="ai-chat-messages">  <!-- 聊天消息区域 -->
+                            <!-- 系统欢迎消息 -->
+                            <div class="ai-message ai-system">
+                                <div class="message-content">你好！我是你的AI学习伙伴，可以帮你制定学习计划、解答问题或提供学习建议。</div>
+                                <div class="message-time">系统</div>
+                            </div>
+                        </div>
+                        <div class="ai-input-full">  <!-- AI输入区域 -->
+                            <input type="text" id="ai-message-input" placeholder="向AI学习伙伴提问..." maxlength="200">  <!-- 消息输入框 -->
+                            <button id="ai-send-btn" class="btn btn-primary">发送</button>
+                        </div>
+                        <div class="ai-quick-actions-full">
+                            <button class="quick-action-btn" data-prompt="帮我制定今天的学习计划">📝 学习计划</button>
+                            <button class="quick-action-btn" data-prompt="解释番茄工作法的原理">🍅 方法解释</button>
+                            <button class="quick-action-btn" data-prompt="如何提高学习专注力？">💡 专注技巧</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        
+            <!-- 虚拟自习室页面 -->
+            <div id="studyroom-page" class="page">
+                <div class="studyroom-full-container">
+                    <h2>👥 虚拟自习室</h2>
+                    <div class="room-controls-full">
+                        <input type="text" id="username-input" placeholder="请输入你的昵称" maxlength="20">
+                        <input type="text" id="room-id-input" placeholder="输入房间ID" maxlength="20">
+                        <button id="join-room-btn" class="btn btn-primary">加入房间</button>
+                        <button id="create-room-btn" class="btn btn-outline">创建房间</button>
+                    </div>
+                
+                    <div class="room-content-full" style="display: none;" id="room-content">
+                        <div class="room-layout-full">
+                            <div class="room-users-section">
+                                <h4>在线用户</h4>
+                                <div id="room-users-list" class="room-users-list">
+                                    <!-- 用户列表将通过JavaScript动态加载 -->
+                                </div>
+                            </div>
+                        
+                            <div class="room-chat-section">
+                                <div id="room-chat-messages" class="room-chat-messages">
+                                    <!-- 聊天消息将通过JavaScript动态加载 -->
+                                </div>
+                                <div class="room-chat-input">
+                                    <input type="text" id="room-message-input" placeholder="输入聊天消息..." maxlength="200">
+                                    <button id="room-send-btn" class="btn btn-primary">发送</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 待办事项页面 -->
+            <div id="todo-page" class="page">
+                <div class="todo-header">
+                    <h2>📋 待办事项管理</h2>
+                    <div class="todo-controls">
+                        <input type="text" id="new-todo-input" placeholder="添加新的待办事项..." maxlength="100">
+                        <input type="number" id="todo-duration" placeholder="分钟" min="1" max="240" value="25">
+                        <button id="add-todo-btn" class="btn btn-primary">添加</button>
+                    </div>
+                </div>
+
+                <div class="todo-lists">
+                    <div class="todo-section">
+                        <h3>🕒 待完成</h3>
+                        <div id="pending-todos" class="todo-list">
+                            <!-- 待办事项将通过JavaScript动态加载 -->
+                        </div>
+                    </div>
+
+                    <div class="todo-section">
+                        <h3>✅ 已完成</h3>
+                        <div id="completed-todos" class="todo-list">
+                            <!-- 已完成事项将通过JavaScript动态加载 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 数据统计页面 -->
+            <div id="stats-page" class="page">
+                <div class="stats-header">
+                    <h2>📊 学习数据统计</h2>
+                    <div class="stats-controls">
+                        <div class="date-filter">
+                            <select id="stats-period">
+                                <option value="week">本周</option>
+                                <option value="month">本月</option>
+                                <option value="year">今年</option>
+                            </select>
+                        </div>
+                        <button id="chart-analysis-btn" class="btn btn-primary">
+                            📈 图表分析
+                        </button>
+                    </div>
+                </div>
+            
+                <!-- 统计概览卡片 -->
+                <div class="stats-overview">
+                    <div class="overview-card primary">
+                        <div class="overview-icon">🍅</div>
+                        <div class="overview-content">
+                            <h3>累计专注</h3>
+                            <div class="overview-numbers">
+                                <div class="number-group">
+                                    <span class="number" id="total-sessions">0</span>
+                                    <span class="label">总番茄钟</span>
+                                </div>
+                                <div class="number-group">
+                                    <span class="number" id="total-minutes">0</span>
+                                    <span class="label">总专注分钟</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+            
+                    <div class="overview-card success">
+                        <div class="overview-icon">🎯</div>
+                        <div class="overview-content">
+                            <h3>当日专注</h3>
+                            <div class="overview-numbers">
+                                <div class="number-group">
+                                    <span class="number" id="today-sessions">0</span>
+                                    <span class="label">今日番茄钟</span>
+                                </div>
+                                <div class="number-group">
+                                    <span class="number" id="today-minutes">0</span>
+                                    <span class="label">今日分钟</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+            
+                    <div class="overview-card info">
+                        <div class="overview-icon">📈</div>
+                        <div class="overview-content">
+                            <h3>平均专注</h3>
+                            <div class="overview-numbers">
+                                <div class="number-group">
+                                    <span class="number" id="avg-sessions">0</span>
+                                    <span class="label">日均番茄</span>
+                                </div>
+                                <div class="number-group">
+                                    <span class="number" id="avg-minutes">0</span>
+                                    <span class="label">日均分钟</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            
+                <div class="stats-content">
+                    <!-- 左侧：详细记录 -->
+                    <div class="history-section">
+                        <div class="section-header">
+                            <h3>📝 详细记录</h3>
+                            <span class="record-count" id="record-count">共 0 条记录</span>
+                        </div>
+                        <div id="history-list" class="history-list">
+                            <!-- 记录将通过JavaScript动态加载 -->
+                        </div>
+                    </div>
+            
+                    <!-- 右侧：动态图片和快速统计 -->
+                    <div class="visual-section">
+                        <!-- 动态图片区域 -->
+                        <div class="animation-container">
+                            <div class="floating-tomato">🍅</div>
+                            <div class="floating-book">📚</div>
+                            <div class="floating-clock">⏰</div>
+                            <div class="focus-animation">
+                                <div class="pulse-circle"></div>
+                                <div class="concentration-text">专注中...</div>
+                            </div>
+                        </div>
+            
+                        <!-- 快速统计 -->
+                        <div class="quick-stats">
+                            <h4>🎯 快速统计</h4>
+                            <div class="quick-stat-item">
+                                <span class="stat-name">最长专注</span>
+                                <span class="stat-value" id="longest-session">0 分钟</span>
+                            </div>
+                            <div class="quick-stat-item">
+                                <span class="stat-name">最佳时段</span>
+                                <span class="stat-value" id="best-hour">未记录</span>
+                            </div>
+                            <div class="quick-stat-item">
+                                <span class="stat-name">连续天数</span>
+                                <span class="stat-value" id="streak-days">0 天</span>
+                            </div>
+                            <div class="quick-stat-item">
+                                <span class="stat-name">完成率</span>
+                                <span class="stat-value" id="completion-rate">0%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 图表分析页面 -->
+            <div id="charts-page" class="page">
+                <div class="charts-header">
+                    <button id="back-to-stats" class="btn btn-outline">← 返回统计</button>
+                    <h2>📈 详细图表分析 - <span id="chart-period">本周</span></h2>
+                </div>
+            
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <h3>🍅 专注时长分布</h3>
+                        <canvas id="duration-chart" width="400" height="300"></canvas>
+                    </div>
+            
+                    <div class="chart-card">
+                        <h3>📊 时间趋势分析</h3>
+                        <canvas id="trend-chart" width="400" height="300"></canvas>
+                    </div>
+            
+                    <div class="chart-card full-width">
+                        <h3>⏰ 月度专注统计</h3>
+                        <canvas id="monthly-chart" width="800" height="300"></canvas>
+                    </div>
+            
+                    <div class="chart-card">
+                        <h3>🌅 专注时段分布</h3>
+                        <canvas id="hourly-chart" width="400" height="300"></canvas>
+                    </div>
+            
+                    <div class="chart-card">
+                        <h3>📈 年度专注趋势</h3>
+                        <canvas id="yearly-chart" width="400" height="300"></canvas>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 通知音 -->
+    <audio id="notification-sound" preload="auto">
+        <source src="https://assets.mixkit.co/active_storage/sfx/1356/1356.wav" type="audio/mpeg">
+    </audio>
+
+    <script src="script.js"></script>
+</body>
+</html>

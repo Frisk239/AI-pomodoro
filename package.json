@@ -1,0 +1,17 @@
+{
+  "name": "pomodoro-backend",
+  "version": "1.0.0",
+  "description": "轻量级番茄钟后端API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^4.18.2",
+    "socket.io": "^4.8.1"
+  }
+}
