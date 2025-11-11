@@ -350,6 +350,29 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
+// 验证用户登录状态
+app.get('/api/auth/verify', authenticateToken, (req, res) => {
+    try {
+        const user = db.prepare('SELECT id, username, email, created_at FROM users WHERE id = ?').get(req.user.id);
+        if (!user) {
+            return res.status(401).json({ error: '用户不存在或已失效' });
+        }
+
+        res.json({
+            message: '登录验证成功',
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                created_at: user.created_at
+            }
+        });
+    } catch (error) {
+        console.error('登录验证错误:', error);
+        res.status(500).json({ error: '验证失败，请稍后重试' });
+    }
+});
+
 // 获取用户资料
 app.get('/api/auth/profile', authenticateToken, (req, res) => {
     try {
@@ -365,6 +388,98 @@ app.get('/api/auth/profile', authenticateToken, (req, res) => {
     } catch (error) {
         console.error('获取用户资料错误:', error);
         res.status(500).json({ error: '获取用户资料失败' });
+    }
+});
+
+// 修改密码
+app.put('/api/auth/change-password', authenticateToken, async (req, res) => {
+    const { oldPassword, newPassword } = req.body;
+
+    if (!oldPassword || !newPassword) {
+        return res.status(400).json({ error: '旧密码和新密码都是必填项' });
+    }
+
+    if (newPassword.length < 6) {
+        return res.status(400).json({ error: '新密码长度至少为6位' });
+    }
+
+    try {
+        // 获取当前用户信息
+        const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+        if (!user) {
+            return res.status(404).json({ error: '用户不存在' });
+        }
+
+        // 验证旧密码
+        const isValidOldPassword = await bcrypt.compare(oldPassword, user.password_hash);
+        if (!isValidOldPassword) {
+            return res.status(400).json({ error: '旧密码错误' });
+        }
+
+        // 加密新密码
+        const saltRounds = 10;
+        const hashedNewPassword = await bcrypt.hash(newPassword, saltRounds);
+
+        // 更新密码
+        const stmt = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+        const result = stmt.run(hashedNewPassword, req.user.id);
+
+        if (result.changes === 0) {
+            return res.status(500).json({ error: '密码更新失败' });
+        }
+
+        res.json({
+            message: '密码修改成功'
+        });
+
+    } catch (error) {
+        console.error('修改密码错误:', error);
+        res.status(500).json({ error: '密码修改失败，请稍后重试' });
+    }
+});
+
+// 注销账号
+app.delete('/api/auth/delete-account', authenticateToken, async (req, res) => {
+    const { confirmPassword } = req.body;
+
+    if (!confirmPassword) {
+        return res.status(400).json({ error: '请输入密码确认注销' });
+    }
+
+    try {
+        // 获取当前用户信息
+        const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+        if (!user) {
+            return res.status(404).json({ error: '用户不存在' });
+        }
+
+        // 验证密码
+        const isValidPassword = await bcrypt.compare(confirmPassword, user.password_hash);
+        if (!isValidPassword) {
+            return res.status(400).json({ error: '密码错误' });
+        }
+
+        // 开始事务，确保级联删除的原子性
+        const deleteSessions = db.prepare('DELETE FROM pomodoro_sessions WHERE user_id = ?');
+        const deleteTodos = db.prepare('DELETE FROM todos WHERE user_id = ?');
+        const deleteUser = db.prepare('DELETE FROM users WHERE id = ?');
+
+        // 执行级联删除
+        deleteSessions.run(req.user.id);
+        deleteTodos.run(req.user.id);
+        const userResult = deleteUser.run(req.user.id);
+
+        if (userResult.changes === 0) {
+            return res.status(500).json({ error: '账号注销失败' });
+        }
+
+        res.json({
+            message: '账号已成功注销，所有数据已被删除'
+        });
+
+    } catch (error) {
+        console.error('注销账号错误:', error);
+        res.status(500).json({ error: '账号注销失败，请稍后重试' });
     }
 });
 

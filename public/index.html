@@ -23,6 +23,7 @@
                 <button class="nav-btn" data-page="studyroom">👥 虚拟自习室</button>
                 <button class="nav-btn" data-page="todo">📋 待办事项</button>
                 <button class="nav-btn" data-page="stats">📊 数据统计</button>
+                <button class="nav-btn" data-page="profile">👤 个人中心</button>
             </nav>
         </header>
 
@@ -307,6 +308,125 @@
                     <div class="chart-card">
                         <h3>📈 年度专注趋势</h3>
                         <canvas id="yearly-chart" width="400" height="300"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 个人中心页面 -->
+            <div id="profile-page" class="page">
+                <div class="profile-container">
+                    <div class="profile-header">
+                        <h2>👤 个人中心</h2>
+                        <p>管理您的账户信息和设置</p>
+                    </div>
+
+                    <!-- 用户信息卡片 -->
+                    <div class="profile-card">
+                        <h3>📋 账户信息</h3>
+                        <div class="user-info">
+                            <div class="info-item">
+                                <label>用户名:</label>
+                                <span id="user-username">加载中...</span>
+                            </div>
+                            <div class="info-item">
+                                <label>邮箱:</label>
+                                <span id="user-email">加载中...</span>
+                            </div>
+                            <div class="info-item">
+                                <label>注册时间:</label>
+                                <span id="user-created-at">加载中...</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 修改密码卡片 -->
+                    <div class="profile-card">
+                        <h3>🔒 修改密码</h3>
+                        <form id="change-password-form" class="profile-form">
+                            <div class="form-group">
+                                <label for="old-password">当前密码</label>
+                                <input type="password" id="old-password" required>
+                                <div class="error-message" id="old-password-error"></div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="new-password">新密码</label>
+                                <input type="password" id="new-password" required minlength="6">
+                                <div class="error-message" id="new-password-error"></div>
+                                <small class="form-hint">密码至少需要6个字符</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="confirm-new-password">确认新密码</label>
+                                <input type="password" id="confirm-new-password" required>
+                                <div class="error-message" id="confirm-new-password-error"></div>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary" id="change-password-btn">
+                                修改密码
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- 账户操作卡片 -->
+                    <div class="profile-card danger">
+                        <h3>⚠️ 危险操作</h3>
+                        <p class="warning-text">
+                            以下操作不可逆，请谨慎使用！
+                        </p>
+
+                        <div class="action-buttons">
+                            <button class="btn btn-secondary" id="logout-btn">
+                                🚪 退出登录
+                            </button>
+
+                            <button class="btn btn-danger" id="delete-account-btn">
+                                🗑️ 注销账号
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 注销账号确认模态框 -->
+            <div id="delete-account-modal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3>⚠️ 确认注销账号</h3>
+                    </div>
+                    <div class="modal-body">
+                        <p class="danger-text">
+                            <strong>警告：</strong>此操作不可逆！注销账号将永久删除以下所有数据：
+                        </p>
+                        <ul class="danger-list">
+                            <li>您的账户信息</li>
+                            <li>所有番茄钟学习记录</li>
+                            <li>所有待办事项</li>
+                            <li>学习统计数据</li>
+                        </ul>
+                        <p>请输入您的密码以确认注销：</p>
+                        <input type="password" id="delete-confirm-password" placeholder="输入密码确认注销" required>
+                        <div class="error-message" id="delete-password-error"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" id="cancel-delete-btn">取消</button>
+                        <button class="btn btn-danger" id="confirm-delete-btn">确认注销</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 退出登录确认模态框 -->
+            <div id="logout-modal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3>🚪 确认退出登录</h3>
+                    </div>
+                    <div class="modal-body">
+                        <p>您确定要退出登录吗？</p>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" id="cancel-logout-btn">取消</button>
+                        <button class="btn btn-primary" id="confirm-logout-btn">确认退出</button>
                     </div>
                 </div>
             </div>

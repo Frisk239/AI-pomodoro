@@ -5,13 +5,16 @@
 class AuthService {
     constructor() {
         this.API_BASE = 'http://localhost:3000/api/auth';
-        this.init();
+        // 异步初始化
+        this.init().catch(error => {
+            console.error('认证服务初始化失败:', error);
+        });
     }
 
     /**
      * 初始化认证服务
      */
-    init() {
+    async init() {
         // 检查当前页面类型
         const currentPage = this.getCurrentPage();
 
@@ -22,7 +25,7 @@ class AuthService {
         }
 
         // 检查是否已登录，如果已登录则跳转到主页面
-        this.checkAuthStatus();
+        await this.checkAuthStatus();
     }
 
     /**
@@ -41,14 +44,53 @@ class AuthService {
     /**
      * 检查认证状态
      */
-    checkAuthStatus() {
+    async checkAuthStatus() {
         const token = this.getToken();
-        if (token && this.getCurrentPage() !== 'main') {
-            // 已登录用户访问认证页面，跳转到主页面
-            window.location.href = 'index.html';
-        } else if (!token && this.getCurrentPage() === 'main') {
-            // 未登录用户访问主页面，跳转到登录页面
-            window.location.href = 'login.html';
+        const currentPage = this.getCurrentPage();
+
+        console.log('检查认证状态:', { token: !!token, currentPage });
+
+        if (currentPage === 'main') {
+            // 在主页面，需要验证token有效性
+            if (!token) {
+                console.log('未登录用户访问主页面，跳转到登录页面');
+                window.location.href = 'login.html';
+                return;
+            }
+
+            // 验证token有效性
+            try {
+                console.log('验证token有效性...');
+                const response = await fetch(`${this.API_BASE}/verify`, {
+                    method: 'GET',
+                    headers: this.getAuthHeaders()
+                });
+
+                if (response.ok) {
+                    console.log('token验证成功，用户已登录');
+                    // token有效，继续留在主页面
+                    return;
+                } else {
+                    console.log('token验证失败，清除本地token并跳转到登录页面');
+                    // token无效，清除本地存储并跳转到登录页面
+                    this.logout();
+                    return;
+                }
+            } catch (error) {
+                console.error('token验证请求失败:', error);
+                // 网络错误时，清除token并跳转到登录页面
+                this.logout();
+                return;
+            }
+        } else if (currentPage !== 'main') {
+            // 在认证页面
+            if (token) {
+                // 已登录用户访问认证页面，跳转到主页面
+                console.log('已登录用户访问认证页面，跳转到主页面');
+                window.location.href = 'index.html';
+            } else {
+                console.log('未登录用户在认证页面，无需操作');
+            }
         }
     }
 

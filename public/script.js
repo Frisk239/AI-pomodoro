@@ -15,6 +15,9 @@ class PomodoroTimer {
             CHAT: `${this.API_BASE}/chat`, // AI聊天API
             TODOS: `${this.API_BASE}/todos` // 待办事项API
         };
+
+        // 引用全局认证服务
+        this.authService = authService;
         
 		// 初始化进度环 - 添加延迟确保DOM加载完成
 		setTimeout(() => {
@@ -100,7 +103,7 @@ class PomodoroTimer {
             todaySessionsCount: document.getElementById('today-sessions-count'),
             totalSessionsCount: document.getElementById('total-sessions-count'),
 			
-			chartAnalysisBtn: document.getElementById('chart-analysis-btn'),
+            chartAnalysisBtn: document.getElementById('chart-analysis-btn'),
 			chartsPage: document.getElementById('charts-page'),
 		    backToStatsBtn: document.getElementById('back-to-stats'),
 		    chartPeriod: document.getElementById('chart-period'),
@@ -110,7 +113,26 @@ class PomodoroTimer {
 		    longestSession: document.getElementById('longest-session'),
 		    bestHour: document.getElementById('best-hour'),
 		    streakDays: document.getElementById('streak-days'),
-		    completionRate: document.getElementById('completion-rate')
+		    completionRate: document.getElementById('completion-rate'),
+
+            // 个人中心元素
+            userUsername: document.getElementById('user-username'),
+            userEmail: document.getElementById('user-email'),
+            userCreatedAt: document.getElementById('user-created-at'),
+            changePasswordForm: document.getElementById('change-password-form'),
+            oldPassword: document.getElementById('old-password'),
+            newPassword: document.getElementById('new-password'),
+            confirmNewPassword: document.getElementById('confirm-new-password'),
+            changePasswordBtn: document.getElementById('change-password-btn'),
+            logoutBtn: document.getElementById('logout-btn'),
+            deleteAccountBtn: document.getElementById('delete-account-btn'),
+            deleteAccountModal: document.getElementById('delete-account-modal'),
+            logoutModal: document.getElementById('logout-modal'),
+            deleteConfirmPassword: document.getElementById('delete-confirm-password'),
+            cancelDeleteBtn: document.getElementById('cancel-delete-btn'),
+            confirmDeleteBtn: document.getElementById('confirm-delete-btn'),
+            cancelLogoutBtn: document.getElementById('cancel-logout-btn'),
+            confirmLogoutBtn: document.getElementById('confirm-logout-btn')
         }; 
         
         // 初始化
@@ -234,9 +256,42 @@ class PomodoroTimer {
         
         // 统计事件
         this.elements.statsPeriod.addEventListener('change', () => this.loadStats());
-		
+
 		this.elements.chartAnalysisBtn.addEventListener('click', () => this.showChartAnalysis());
 		this.elements.backToStatsBtn.addEventListener('click', () => this.switchPage('stats'));
+
+        // 个人中心事件
+        if (this.elements.changePasswordForm) {
+            this.elements.changePasswordForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.handleChangePassword();
+            });
+        }
+
+        if (this.elements.logoutBtn) {
+            this.elements.logoutBtn.addEventListener('click', () => this.showLogoutModal());
+        }
+
+        if (this.elements.deleteAccountBtn) {
+            this.elements.deleteAccountBtn.addEventListener('click', () => this.showDeleteAccountModal());
+        }
+
+        // 模态框事件
+        if (this.elements.cancelLogoutBtn) {
+            this.elements.cancelLogoutBtn.addEventListener('click', () => this.hideLogoutModal());
+        }
+
+        if (this.elements.confirmLogoutBtn) {
+            this.elements.confirmLogoutBtn.addEventListener('click', () => this.confirmLogout());
+        }
+
+        if (this.elements.cancelDeleteBtn) {
+            this.elements.cancelDeleteBtn.addEventListener('click', () => this.hideDeleteAccountModal());
+        }
+
+        if (this.elements.confirmDeleteBtn) {
+            this.elements.confirmDeleteBtn.addEventListener('click', () => this.confirmDeleteAccount());
+        }
     }
     
     // 页面切换
@@ -245,15 +300,17 @@ class PomodoroTimer {
         this.elements.navBtns.forEach(btn => {
             btn.classList.toggle('active', btn.getAttribute('data-page') === pageId);
         });
-        
+
         // 更新页面显示
         this.elements.pages.forEach(page => {
             page.classList.toggle('active', page.id === `${pageId}-page`);
         });
-        
+
         // 页面特定初始化
         if (pageId === 'stats') {
             this.initCharts();
+        } else if (pageId === 'profile') {
+            this.loadUserProfile();
         }
     }
     
@@ -1405,12 +1462,272 @@ class PomodoroTimer {
 		showChartAnalysis() {
 		    const period = this.elements.statsPeriod.value;
 		    const periodText = this.elements.statsPeriod.options[this.elements.statsPeriod.selectedIndex].text;
-		    
+
 		    this.elements.chartPeriod.textContent = periodText;
 		    this.switchPage('charts');
 		    this.initCharts();
 		}
-		
+
+		// === 个人中心功能 ===
+
+		// 加载用户资料
+		async loadUserProfile() {
+		    // 首先检查是否有token
+		    const token = this.authService.getToken();
+		    if (!token) {
+		        console.log('没有找到认证token');
+		        this.showNotification('请先登录后再访问个人中心', 'error');
+		        // 延迟跳转到登录页面
+		        setTimeout(() => {
+		            window.location.href = 'login.html';
+		        }, 2000);
+		        return;
+		    }
+
+		    try {
+		        console.log('正在加载用户资料...');
+		        const response = await fetch('/api/auth/profile', {
+		            method: 'GET',
+		            headers: this.authService.getAuthHeaders()
+		        });
+
+		        const result = await response.json();
+
+		        if (response.ok) {
+		            console.log('用户资料加载成功:', result.user);
+		            this.displayUserProfile(result.user);
+		        } else {
+		            console.error('加载用户资料失败:', result.error);
+		            this.showNotification('加载用户资料失败: ' + result.error, 'error');
+		            // 如果是认证错误，跳转到登录页面
+		            if (response.status === 401 || response.status === 403) {
+		                setTimeout(() => {
+		                    window.location.href = 'login.html';
+		                }, 2000);
+		            }
+		        }
+		    } catch (error) {
+		        console.error('加载用户资料错误:', error);
+		        this.showNotification('网络错误，无法加载用户资料', 'error');
+		    }
+		}
+
+		// 显示用户资料
+		displayUserProfile(user) {
+		    if (this.elements.userUsername) {
+		        this.elements.userUsername.textContent = user.username;
+		    }
+		    if (this.elements.userEmail) {
+		        this.elements.userEmail.textContent = user.email;
+		    }
+		    if (this.elements.userCreatedAt) {
+		        // 格式化注册时间
+		        const createdAt = new Date(user.created_at);
+		        const formattedDate = createdAt.toLocaleDateString('zh-CN', {
+		            year: 'numeric',
+		            month: 'long',
+		            day: 'numeric',
+		            hour: '2-digit',
+		            minute: '2-digit'
+		        });
+		        this.elements.userCreatedAt.textContent = formattedDate;
+		    }
+		}
+
+		// 处理修改密码
+		async handleChangePassword() {
+		    const oldPassword = this.elements.oldPassword ? this.elements.oldPassword.value : '';
+		    const newPassword = this.elements.newPassword ? this.elements.newPassword.value : '';
+		    const confirmPassword = this.elements.confirmNewPassword ? this.elements.confirmNewPassword.value : '';
+
+		    // 清空之前的错误信息
+		    this.clearPasswordErrors();
+
+		    // 验证输入
+		    if (!oldPassword || !newPassword || !confirmPassword) {
+		        this.showPasswordError('old-password', '请填写所有密码字段');
+		        return;
+		    }
+
+		    if (newPassword.length < 6) {
+		        this.showPasswordError('new-password', '新密码至少需要6个字符');
+		        return;
+		    }
+
+		    if (newPassword !== confirmPassword) {
+		        this.showPasswordError('confirm-new-password', '两次输入的新密码不一致');
+		        return;
+		    }
+
+		    if (oldPassword === newPassword) {
+		        this.showPasswordError('new-password', '新密码不能与旧密码相同');
+		        return;
+		    }
+
+		    // 显示加载状态
+		    this.setPasswordLoading(true);
+
+		    try {
+		        const response = await fetch('/api/auth/change-password', {
+		            method: 'PUT',
+		            headers: this.authService.getAuthHeaders(),
+		            body: JSON.stringify({
+		                oldPassword: oldPassword,
+		                newPassword: newPassword
+		            })
+		        });
+
+		        const result = await response.json();
+
+		        if (response.ok) {
+		            this.showNotification('密码修改成功！', 'success');
+		            // 清空表单
+		            if (this.elements.changePasswordForm) {
+		                this.elements.changePasswordForm.reset();
+		            }
+		        } else {
+		            this.showPasswordError('old-password', result.error || '密码修改失败');
+		        }
+		    } catch (error) {
+		        console.error('修改密码错误:', error);
+		        this.showPasswordError('old-password', '网络错误，请稍后重试');
+		    } finally {
+		        this.setPasswordLoading(false);
+		    }
+		}
+
+		// 显示退出登录模态框
+		showLogoutModal() {
+		    if (this.elements.logoutModal) {
+		        this.elements.logoutModal.style.display = 'flex';
+		    }
+		}
+
+		// 隐藏退出登录模态框
+		hideLogoutModal() {
+		    if (this.elements.logoutModal) {
+		        this.elements.logoutModal.style.display = 'none';
+		    }
+		}
+
+		// 确认退出登录
+		confirmLogout() {
+		    this.authService.logout();
+		}
+
+		// 显示注销账号模态框
+		showDeleteAccountModal() {
+		    if (this.elements.deleteAccountModal) {
+		        this.elements.deleteAccountModal.style.display = 'flex';
+		        // 清空密码输入
+		        if (this.elements.deleteConfirmPassword) {
+		            this.elements.deleteConfirmPassword.value = '';
+		        }
+		        this.clearDeletePasswordError();
+		    }
+		}
+
+		// 隐藏注销账号模态框
+		hideDeleteAccountModal() {
+		    if (this.elements.deleteAccountModal) {
+		        this.elements.deleteAccountModal.style.display = 'none';
+		    }
+		}
+
+		// 确认注销账号
+		async confirmDeleteAccount() {
+		    const password = this.elements.deleteConfirmPassword ? this.elements.deleteConfirmPassword.value.trim() : '';
+
+		    if (!password) {
+		        this.showDeletePasswordError('请输入密码');
+		        return;
+		    }
+
+		    // 显示加载状态
+		    this.setDeleteLoading(true);
+
+		    try {
+		        const response = await fetch('/api/auth/delete-account', {
+		            method: 'DELETE',
+		            headers: this.authService.getAuthHeaders(),
+		            body: JSON.stringify({
+		                confirmPassword: password
+		            })
+		        });
+
+		        const result = await response.json();
+
+		        if (response.ok) {
+		            this.showNotification('账号已成功注销，所有数据已被删除', 'success');
+		            // 清除本地认证信息并跳转
+		            setTimeout(() => {
+		                this.authService.logout();
+		            }, 2000);
+		        } else {
+		            this.showDeletePasswordError(result.error || '注销失败');
+		        }
+		    } catch (error) {
+		        console.error('注销账号错误:', error);
+		        this.showDeletePasswordError('网络错误，请稍后重试');
+		    } finally {
+		        this.setDeleteLoading(false);
+		    }
+		}
+
+		// 显示密码错误信息
+		showPasswordError(field, message) {
+		    const errorElement = document.getElementById(`${field}-error`);
+		    if (errorElement) {
+		        errorElement.textContent = message;
+		        errorElement.style.display = 'block';
+		    }
+		}
+
+		// 清空密码错误信息
+		clearPasswordErrors() {
+		    const errorElements = document.querySelectorAll('#change-password-form .error-message');
+		    errorElements.forEach(element => {
+		        element.textContent = '';
+		        element.style.display = 'none';
+		    });
+		}
+
+		// 显示注销密码错误信息
+		showDeletePasswordError(message) {
+		    const errorElement = document.getElementById('delete-password-error');
+		    if (errorElement) {
+		        errorElement.textContent = message;
+		        errorElement.style.display = 'block';
+		    }
+		}
+
+		// 清空注销密码错误信息
+		clearDeletePasswordError() {
+		    const errorElement = document.getElementById('delete-password-error');
+		    if (errorElement) {
+		        errorElement.textContent = '';
+		        errorElement.style.display = 'none';
+		    }
+		}
+
+		// 设置密码修改加载状态
+		setPasswordLoading(loading) {
+		    const submitBtn = this.elements.changePasswordBtn;
+		    if (submitBtn) {
+		        submitBtn.disabled = loading;
+		        submitBtn.textContent = loading ? '修改中...' : '修改密码';
+		    }
+		}
+
+		// 设置注销账号加载状态
+		setDeleteLoading(loading) {
+		    const confirmBtn = this.elements.confirmDeleteBtn;
+		    if (confirmBtn) {
+		        confirmBtn.disabled = loading;
+		        confirmBtn.textContent = loading ? '注销中...' : '确认注销';
+		    }
+		}
+
 	}
 	
 	// 全局实例
@@ -1426,4 +1743,3 @@ class PomodoroTimer {
 	    app = new PomodoroTimer();
 	}
 );
-	
