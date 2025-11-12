@@ -44,9 +44,36 @@ function initDatabase() {
         )
     `;
 
+    // 创建聊天会话表
+    const createChatSessionsTableSQL = `
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            title TEXT NOT NULL DEFAULT '新建对话',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            is_active BOOLEAN DEFAULT FALSE,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    `;
+
+    // 创建聊天消息表
+    const createChatMessagesTableSQL = `
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+            content TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES chat_sessions (id) ON DELETE CASCADE
+        )
+    `;
+
     db.exec(createUsersTableSQL);
     db.exec(createSessionsTableSQL);
     db.exec(createTodosTableSQL);
+    db.exec(createChatSessionsTableSQL);
+    db.exec(createChatMessagesTableSQL);
 
     console.log('数据库表准备就绪');
 }

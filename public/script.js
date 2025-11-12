@@ -132,7 +132,18 @@ class PomodoroTimer {
             cancelDeleteBtn: document.getElementById('cancel-delete-btn'),
             confirmDeleteBtn: document.getElementById('confirm-delete-btn'),
             cancelLogoutBtn: document.getElementById('cancel-logout-btn'),
-            confirmLogoutBtn: document.getElementById('confirm-logout-btn')
+            confirmLogoutBtn: document.getElementById('confirm-logout-btn'),
+
+            // AI会话管理元素
+            sessionsList: document.getElementById('sessions-list'),
+            newSessionBtn: document.getElementById('new-session-btn'),
+            currentSessionTitle: document.getElementById('current-session-title'),
+            renameSessionBtn: document.getElementById('rename-session-btn'),
+            deleteSessionBtn: document.getElementById('delete-session-btn'),
+            renameSessionModal: document.getElementById('rename-session-modal'),
+            renameSessionInput: document.getElementById('rename-session-input'),
+            cancelRenameBtn: document.getElementById('cancel-rename-btn'),
+            confirmRenameBtn: document.getElementById('confirm-rename-btn')
         }; 
         
         // 初始化
@@ -291,6 +302,38 @@ class PomodoroTimer {
         if (this.elements.confirmDeleteBtn) {
             this.elements.confirmDeleteBtn.addEventListener('click', () => this.confirmDeleteAccount());
         }
+
+        // AI会话管理事件
+        if (this.elements.newSessionBtn) {
+            this.elements.newSessionBtn.addEventListener('click', () => this.createNewSession());
+        }
+
+        if (this.elements.renameSessionBtn) {
+            this.elements.renameSessionBtn.addEventListener('click', () => this.showRenameSessionModal());
+        }
+
+        if (this.elements.deleteSessionBtn) {
+            this.elements.deleteSessionBtn.addEventListener('click', () => this.deleteCurrentSession());
+        }
+
+        if (this.elements.cancelRenameBtn) {
+            this.elements.cancelRenameBtn.addEventListener('click', () => this.hideRenameSessionModal());
+        }
+
+        if (this.elements.confirmRenameBtn) {
+            this.elements.confirmRenameBtn.addEventListener('click', () => this.confirmRenameSession());
+        }
+
+        // 页面切换时加载会话列表
+        this.elements.navBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const pageId = e.target.getAttribute('data-page');
+                if (pageId === 'ai') {
+                    // 延迟加载会话列表，确保页面切换完成
+                    setTimeout(() => this.loadChatSessions(), 100);
+                }
+            });
+        });
     }
     
     // 页面切换
@@ -1835,6 +1878,414 @@ class PomodoroTimer {
 		    if (confirmBtn) {
 		        confirmBtn.disabled = loading;
 		        confirmBtn.textContent = loading ? '注销中...' : '确认注销';
+		    }
+		}
+
+		// === AI会话管理功能 ===
+
+		// 当前活跃会话ID
+		currentSessionId = null;
+
+		// 加载聊天会话列表
+		async loadChatSessions() {
+		    try {
+		        const response = await fetch('/api/chat/sessions', {
+		            method: 'GET',
+		            headers: this.authService.getAuthHeaders()
+		        });
+
+		        const result = await response.json();
+
+		        if (response.ok) {
+		            this.displayChatSessions(result.data);
+		        } else {
+		            console.error('加载会话列表失败:', result.error);
+		            this.showNotification('加载会话列表失败', 'error');
+		        }
+		    } catch (error) {
+		        console.error('加载会话列表错误:', error);
+		        this.showNotification('网络错误，无法加载会话列表', 'error');
+		    }
+		}
+
+		// 显示会话列表
+		displayChatSessions(sessions) {
+		    const sessionsList = this.elements.sessionsList;
+		    sessionsList.innerHTML = '';
+
+		    if (sessions.length === 0) {
+		        sessionsList.innerHTML = '<div class="empty-state">暂无聊天会话</div>';
+		        return;
+		    }
+
+		    sessions.forEach(session => {
+		        const sessionItem = document.createElement('div');
+		        sessionItem.className = `session-item ${session.is_active ? 'active' : ''}`;
+		        sessionItem.setAttribute('data-session-id', session.id);
+
+		        const updatedAt = new Date(session.updated_at);
+		        const timeString = this.formatSessionTime(updatedAt);
+
+		        sessionItem.innerHTML = `
+		            <div class="session-title">${this.escapeHtml(session.title)}</div>
+		            <div class="session-time">${timeString}</div>
+		            <div class="session-actions">
+		                <button class="session-action-btn" title="重命名" onclick="app.showRenameSessionModal('${session.id}')">✏️</button>
+		                <button class="session-action-btn" title="删除" onclick="app.deleteSession('${session.id}')">🗑️</button>
+		            </div>
+		        `;
+
+		        // 点击切换会话
+		        sessionItem.addEventListener('click', (e) => {
+		            if (!e.target.classList.contains('session-action-btn')) {
+		                this.switchToSession(session.id);
+		            }
+		        });
+
+		        sessionsList.appendChild(sessionItem);
+
+		        // 如果是活跃会话，加载消息
+		        if (session.is_active) {
+		            this.currentSessionId = session.id;
+		            this.loadSessionMessages(session.id);
+		            this.updateSessionTitle(session.title);
+		        }
+		    });
+		}
+
+		// 格式化会话时间
+		formatSessionTime(date) {
+		    const now = new Date();
+		    const diff = now - date;
+		    const minutes = Math.floor(diff / (1000 * 60));
+		    const hours = Math.floor(diff / (1000 * 60 * 60));
+		    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+		    if (minutes < 1) return '刚刚';
+		    if (minutes < 60) return `${minutes}分钟前`;
+		    if (hours < 24) return `${hours}小时前`;
+		    if (days < 7) return `${days}天前`;
+
+		    return date.toLocaleDateString('zh-CN', {
+		        month: 'short',
+		        day: 'numeric'
+		    });
+		}
+
+		// 创建新会话
+		async createNewSession() {
+		    try {
+		        const response = await fetch('/api/chat/sessions', {
+		            method: 'POST',
+		            headers: this.authService.getAuthHeaders()
+		        });
+
+		        const result = await response.json();
+
+		        if (response.ok) {
+		            this.showNotification('新会话创建成功', 'success');
+		            this.loadChatSessions(); // 重新加载会话列表
+		        } else {
+		            console.error('创建会话失败:', result.error);
+		            this.showNotification('创建会话失败', 'error');
+		        }
+		    } catch (error) {
+		        console.error('创建会话错误:', error);
+		        this.showNotification('网络错误，无法创建会话', 'error');
+		    }
+		}
+
+		// 切换到指定会话
+		async switchToSession(sessionId) {
+		    try {
+		        const response = await fetch(`/api/chat/sessions/${sessionId}/activate`, {
+		            method: 'PUT',
+		            headers: this.authService.getAuthHeaders()
+		        });
+
+		        const result = await response.json();
+
+		        if (response.ok) {
+		            this.currentSessionId = sessionId;
+		            this.loadChatSessions(); // 重新加载会话列表，会自动加载消息
+		        } else {
+		            console.error('切换会话失败:', result.error);
+		            this.showNotification('切换会话失败', 'error');
+		        }
+		    } catch (error) {
+		        console.error('切换会话错误:', error);
+		        this.showNotification('网络错误，无法切换会话', 'error');
+		    }
+		}
+
+		// 加载会话消息
+		async loadSessionMessages(sessionId) {
+		    try {
+		        const response = await fetch(`/api/chat/messages/${sessionId}`, {
+		            method: 'GET',
+		            headers: this.authService.getAuthHeaders()
+		        });
+
+		        const result = await response.json();
+
+		        if (response.ok) {
+		            this.displaySessionMessages(result.data);
+		        } else {
+		            console.error('加载消息失败:', result.error);
+		        }
+		    } catch (error) {
+		        console.error('加载消息错误:', error);
+		    }
+		}
+
+		// 显示会话消息
+		displaySessionMessages(messages) {
+		    const messagesContainer = this.elements.aiChatMessages;
+		    messagesContainer.innerHTML = '';
+
+		    if (messages.length === 0) {
+		        // 显示欢迎消息
+		        const welcomeMessage = document.createElement('div');
+		        welcomeMessage.className = 'message-wrapper system-message';
+		        welcomeMessage.innerHTML = `
+		            <div class="message-bubble system-bubble">
+		                <div class="message-content">你好！我是你的AI学习伙伴，可以帮你制定学习计划、解答问题或提供学习建议。</div>
+		                <div class="message-time">系统消息</div>
+		            </div>
+		        `;
+		        messagesContainer.appendChild(welcomeMessage);
+		        return;
+		    }
+
+		    messages.forEach(message => {
+		        const messageWrapper = document.createElement('div');
+		        const isUser = message.role === 'user';
+		        messageWrapper.className = `message-wrapper ${isUser ? 'user-message' : 'ai-message'}`;
+
+		        const createdAt = new Date(message.created_at);
+		        const timeString = createdAt.toLocaleTimeString('zh-CN', {
+		            hour: '2-digit',
+		            minute: '2-digit',
+		            hour12: false
+		        });
+
+		        messageWrapper.innerHTML = `
+		            <div class="message-avatar">${isUser ? '👤' : '🤖'}</div>
+		            <div class="message-bubble">
+		                <div class="message-content">${this.escapeHtml(message.content)}</div>
+		                <div class="message-time">${timeString}</div>
+		            </div>
+		        `;
+
+		        messagesContainer.appendChild(messageWrapper);
+		    });
+
+		    // 滚动到底部
+		    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+		}
+
+		// 发送AI消息（支持会话）
+		async sendAIMessage() {
+		    const message = this.elements.aiMessageInput.value.trim();
+		    if (!message) return;
+
+		    // 检查是否有活跃会话
+		    if (!this.currentSessionId) {
+		        this.showNotification('请先选择或创建一个会话', 'error');
+		        return;
+		    }
+
+		    // 添加用户消息到界面
+		    this.addChatMessage('你', message, new Date().toLocaleTimeString(), 'ai');
+		    this.elements.aiMessageInput.value = '';
+
+		    // 禁用发送按钮
+		    this.elements.aiSendBtn.disabled = true;
+		    this.elements.aiSendBtn.textContent = '发送中...';
+
+		    // 显示正在输入指示器
+		    this.showTypingIndicator('ai');
+
+		    try {
+		        const response = await fetch('/api/chat/send', {
+		            method: 'POST',
+		            headers: this.authService.getAuthHeaders(),
+		            body: JSON.stringify({
+		                message: message,
+		                sessionId: this.currentSessionId
+		            })
+		        });
+
+		        const result = await response.json();
+
+		        // 移除输入指示器
+		        this.hideTypingIndicator('ai');
+
+		        // 恢复发送按钮
+		        this.elements.aiSendBtn.disabled = false;
+		        this.elements.aiSendBtn.textContent = '发送';
+
+		        if (result.success) {
+		            this.addChatMessage('AI学习伙伴', result.reply, result.timestamp, 'ai', 'ai');
+		            // 重新加载会话列表以更新时间
+		            this.loadChatSessions();
+		        } else {
+		            this.addChatMessage('系统', result.reply, result.timestamp, 'ai', 'system');
+		            this.showNotification('AI服务暂时不可用', 'error');
+		        }
+		    } catch (error) {
+		        // 移除输入指示器
+		        this.hideTypingIndicator('ai');
+
+		        // 恢复发送按钮
+		        this.elements.aiSendBtn.disabled = false;
+		        this.elements.aiSendBtn.textContent = '发送';
+
+		        console.error('AI聊天错误:', error);
+
+		        let errorMessage = '网络错误，请检查连接后重试';
+		        if (error.message === '请求超时') {
+		            errorMessage = '请求超时，请稍后重试或简化问题';
+		        }
+
+		        this.addChatMessage('系统', errorMessage, new Date().toLocaleTimeString(), 'ai', 'system');
+		        this.showNotification('AI服务响应超时', 'error');
+		    }
+		}
+
+		// 显示重命名会话模态框
+		showRenameSessionModal(sessionId = null) {
+		    if (this.elements.renameSessionModal) {
+		        this.elements.renameSessionModal.style.display = 'flex';
+		        this.elements.renameSessionInput.value = '';
+		        this.elements.renameSessionInput.focus();
+
+		        // 存储当前要重命名的会话ID
+		        this.renameSessionId = sessionId || this.currentSessionId;
+		    }
+		}
+
+		// 隐藏重命名会话模态框
+		hideRenameSessionModal() {
+		    if (this.elements.renameSessionModal) {
+		        this.elements.renameSessionModal.style.display = 'none';
+		    }
+		}
+
+		// 确认重命名会话
+		async confirmRenameSession() {
+		    const newTitle = this.elements.renameSessionInput.value.trim();
+
+		    if (!newTitle) {
+		        this.showNotification('请输入会话名称', 'error');
+		        return;
+		    }
+
+		    if (!this.renameSessionId) {
+		        this.showNotification('未找到要重命名的会话', 'error');
+		        return;
+		    }
+
+		    try {
+		        const response = await fetch(`/api/chat/sessions/${this.renameSessionId}`, {
+		            method: 'PUT',
+		            headers: this.authService.getAuthHeaders(),
+		            body: JSON.stringify({
+		                title: newTitle
+		            })
+		        });
+
+		        const result = await response.json();
+
+		        if (response.ok) {
+		            this.showNotification('会话重命名成功', 'success');
+		            this.hideRenameSessionModal();
+		            this.loadChatSessions(); // 重新加载会话列表
+
+		            // 如果是当前活跃会话，更新标题
+		            if (this.renameSessionId === this.currentSessionId) {
+		                this.updateSessionTitle(newTitle);
+		            }
+		        } else {
+		            console.error('重命名会话失败:', result.error);
+		            this.showNotification('重命名会话失败', 'error');
+		        }
+		    } catch (error) {
+		        console.error('重命名会话错误:', error);
+		        this.showNotification('网络错误，无法重命名会话', 'error');
+		    }
+		}
+
+		// 删除会话
+		async deleteCurrentSession() {
+		    if (!this.currentSessionId) {
+		        this.showNotification('未找到要删除的会话', 'error');
+		        return;
+		    }
+
+		    if (!confirm('确定要删除这个会话吗？此操作不可恢复。')) {
+		        return;
+		    }
+
+		    try {
+		        const response = await fetch(`/api/chat/sessions/${this.currentSessionId}`, {
+		            method: 'DELETE',
+		            headers: this.authService.getAuthHeaders()
+		        });
+
+		        const result = await response.json();
+
+		        if (response.ok) {
+		            this.showNotification('会话删除成功', 'success');
+		            this.currentSessionId = null;
+		            this.loadChatSessions(); // 重新加载会话列表
+		        } else {
+		            console.error('删除会话失败:', result.error);
+		            this.showNotification('删除会话失败', 'error');
+		        }
+		    } catch (error) {
+		        console.error('删除会话错误:', error);
+		        this.showNotification('网络错误，无法删除会话', 'error');
+		    }
+		}
+
+		// 删除指定会话
+		async deleteSession(sessionId) {
+		    if (!confirm('确定要删除这个会话吗？此操作不可恢复。')) {
+		        return;
+		    }
+
+		    try {
+		        const response = await fetch(`/api/chat/sessions/${sessionId}`, {
+		            method: 'DELETE',
+		            headers: this.authService.getAuthHeaders()
+		        });
+
+		        const result = await response.json();
+
+		        if (response.ok) {
+		            this.showNotification('会话删除成功', 'success');
+
+		            // 如果删除的是当前活跃会话，清空当前会话ID
+		            if (sessionId === this.currentSessionId) {
+		                this.currentSessionId = null;
+		            }
+
+		            this.loadChatSessions(); // 重新加载会话列表
+		        } else {
+		            console.error('删除会话失败:', result.error);
+		            this.showNotification('删除会话失败', 'error');
+		        }
+		    } catch (error) {
+		        console.error('删除会话错误:', error);
+		        this.showNotification('网络错误，无法删除会话', 'error');
+		    }
+		}
+
+		// 更新会话标题显示
+		updateSessionTitle(title) {
+		    if (this.elements.currentSessionTitle) {
+		        this.elements.currentSessionTitle.textContent = title;
 		    }
 		}
 

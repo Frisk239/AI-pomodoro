@@ -34,34 +34,36 @@ io.on('connection', (socket) => {
     // 用户加入自习室
     socket.on('join-room', (data) => {
         const { roomId, username } = data;
-        
+
         // 加入房间
         socket.join(roomId);
-        
+
         // 存储用户信息
         onlineUsers.set(socket.id, { username, roomId });
-        
+
         // 初始化房间（如果不存在）
         if (!studyRooms.has(roomId)) {
             studyRooms.set(roomId, new Set());
         }
         studyRooms.get(roomId).add(socket.id);
-        
+
         // 通知房间内其他用户
         socket.to(roomId).emit('user-joined', {
             username,
             message: `${username} 加入了自习室`,
             timestamp: new Date().toLocaleTimeString()
         });
-        
-        // 发送当前房间用户列表给新用户
+
+        // 获取更新后的房间用户列表
         const roomUsers = Array.from(studyRooms.get(roomId)).map(socketId => {
             const user = onlineUsers.get(socketId);
             return { username: user.username, status: '在线' };
         });
-        
-        socket.emit('room-users', roomUsers);
-        console.log(`${username} 加入房间 ${roomId}`);
+
+        // 给房间内的所有用户（包括新用户）发送更新后的用户列表
+        io.to(roomId).emit('room-users', roomUsers);
+
+        console.log(`${username} 加入房间 ${roomId}，当前房间用户数: ${roomUsers.length}`);
     });
 
     // 处理聊天消息
@@ -81,19 +83,28 @@ io.on('connection', (socket) => {
         const user = onlineUsers.get(socket.id);
         if (user) {
             const { username, roomId } = user;
-            
+
             // 从房间移除
             if (studyRooms.has(roomId)) {
                 studyRooms.get(roomId).delete(socket.id);
-                
+
                 // 通知其他用户
                 socket.to(roomId).emit('user-left', {
                     username,
                     message: `${username} 离开了自习室`,
                     timestamp: new Date().toLocaleTimeString()
                 });
+
+                // 获取更新后的房间用户列表，并发送给剩余用户
+                const remainingUsers = Array.from(studyRooms.get(roomId)).map(socketId => {
+                    const user = onlineUsers.get(socketId);
+                    return { username: user.username, status: '在线' };
+                });
+
+                // 给房间内剩余的所有用户发送更新后的用户列表
+                io.to(roomId).emit('room-users', remainingUsers);
             }
-            
+
             onlineUsers.delete(socket.id);
             console.log(`${username} 断开连接`);
         }
@@ -483,52 +494,350 @@ app.delete('/api/auth/delete-account', authenticateToken, async (req, res) => {
     }
 });
 
-// === AI学习伙伴API===
-app.post('/api/chat', async (req, res) => {
-    const { message } = req.body;
-    
+// === 聊天会话管理API ===
+
+// 获取用户的所有会话
+app.get('/api/chat/sessions', authenticateToken, (req, res) => {
+    try {
+        const sessions = db.prepare(`
+            SELECT id, title, created_at, updated_at, is_active
+            FROM chat_sessions
+            WHERE user_id = ?
+            ORDER BY updated_at DESC
+        `).all(req.user.id);
+
+        res.json({
+            message: '获取会话列表成功',
+            data: sessions
+        });
+    } catch (error) {
+        console.error('获取会话列表错误:', error);
+        res.status(500).json({ error: '获取会话列表失败' });
+    }
+});
+
+// 创建新会话
+app.post('/api/chat/sessions', authenticateToken, (req, res) => {
+    try {
+        // 先将其他会话设为非活跃
+        db.prepare(`
+            UPDATE chat_sessions
+            SET is_active = FALSE
+            WHERE user_id = ?
+        `).run(req.user.id);
+
+        // 创建新会话
+        const result = db.prepare(`
+            INSERT INTO chat_sessions (user_id, title, is_active)
+            VALUES (?, '新建对话', TRUE)
+        `).run(req.user.id);
+
+        const newSession = db.prepare(`
+            SELECT id, title, created_at, updated_at, is_active
+            FROM chat_sessions
+            WHERE id = ?
+        `).get(result.lastInsertRowid);
+
+        res.json({
+            message: '创建会话成功',
+            data: newSession
+        });
+    } catch (error) {
+        console.error('创建会话错误:', error);
+        res.status(500).json({ error: '创建会话失败' });
+    }
+});
+
+// 更新会话（重命名）
+app.put('/api/chat/sessions/:id', authenticateToken, (req, res) => {
+    const sessionId = req.params.id;
+    const { title } = req.body;
+
+    if (!title || title.trim().length === 0) {
+        return res.status(400).json({ error: '会话标题不能为空' });
+    }
+
+    try {
+        // 验证会话属于当前用户
+        const session = db.prepare(`
+            SELECT id FROM chat_sessions
+            WHERE id = ? AND user_id = ?
+        `).get(sessionId, req.user.id);
+
+        if (!session) {
+            return res.status(404).json({ error: '会话不存在或无权限访问' });
+        }
+
+        // 更新会话标题和时间
+        const result = db.prepare(`
+            UPDATE chat_sessions
+            SET title = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND user_id = ?
+        `).run(title.trim(), sessionId, req.user.id);
+
+        if (result.changes === 0) {
+            return res.status(404).json({ error: '会话不存在' });
+        }
+
+        res.json({
+            message: '会话更新成功'
+        });
+    } catch (error) {
+        console.error('更新会话错误:', error);
+        res.status(500).json({ error: '更新会话失败' });
+    }
+});
+
+// 删除会话
+app.delete('/api/chat/sessions/:id', authenticateToken, (req, res) => {
+    const sessionId = req.params.id;
+
+    try {
+        // 验证会话属于当前用户
+        const session = db.prepare(`
+            SELECT id FROM chat_sessions
+            WHERE id = ? AND user_id = ?
+        `).get(sessionId, req.user.id);
+
+        if (!session) {
+            return res.status(404).json({ error: '会话不存在或无权限访问' });
+        }
+
+        // 删除会话（级联删除会话消息）
+        const result = db.prepare(`
+            DELETE FROM chat_sessions
+            WHERE id = ? AND user_id = ?
+        `).run(sessionId, req.user.id);
+
+        if (result.changes === 0) {
+            return res.status(404).json({ error: '会话不存在' });
+        }
+
+        res.json({
+            message: '会话删除成功'
+        });
+    } catch (error) {
+        console.error('删除会话错误:', error);
+        res.status(500).json({ error: '删除会话失败' });
+    }
+});
+
+// 激活指定会话
+app.put('/api/chat/sessions/:id/activate', authenticateToken, (req, res) => {
+    const sessionId = req.params.id;
+
+    try {
+        // 验证会话属于当前用户
+        const session = db.prepare(`
+            SELECT id FROM chat_sessions
+            WHERE id = ? AND user_id = ?
+        `).get(sessionId, req.user.id);
+
+        if (!session) {
+            return res.status(404).json({ error: '会话不存在或无权限访问' });
+        }
+
+        // 先将所有会话设为非活跃
+        db.prepare(`
+            UPDATE chat_sessions
+            SET is_active = FALSE
+            WHERE user_id = ?
+        `).run(req.user.id);
+
+        // 激活指定会话
+        db.prepare(`
+            UPDATE chat_sessions
+            SET is_active = TRUE, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND user_id = ?
+        `).run(sessionId, req.user.id);
+
+        res.json({
+            message: '会话激活成功'
+        });
+    } catch (error) {
+        console.error('激活会话错误:', error);
+        res.status(500).json({ error: '激活会话失败' });
+    }
+});
+
+// 获取会话消息历史
+app.get('/api/chat/messages/:sessionId', authenticateToken, (req, res) => {
+    const sessionId = req.params.sessionId;
+
+    try {
+        // 验证会话属于当前用户
+        const session = db.prepare(`
+            SELECT id FROM chat_sessions
+            WHERE id = ? AND user_id = ?
+        `).get(sessionId, req.user.id);
+
+        if (!session) {
+            return res.status(404).json({ error: '会话不存在或无权限访问' });
+        }
+
+        // 获取消息历史
+        const messages = db.prepare(`
+            SELECT id, role, content, created_at
+            FROM chat_messages
+            WHERE session_id = ?
+            ORDER BY created_at ASC
+        `).all(sessionId);
+
+        res.json({
+            message: '获取消息历史成功',
+            data: messages
+        });
+    } catch (error) {
+        console.error('获取消息历史错误:', error);
+        res.status(500).json({ error: '获取消息历史失败' });
+    }
+});
+
+// 清理旧消息的辅助函数
+function cleanupOldMessages(sessionId) {
+    try {
+        // 获取当前消息总数
+        const totalCount = db.prepare(`
+            SELECT COUNT(*) as count FROM chat_messages
+            WHERE session_id = ?
+        `).get(sessionId);
+
+        if (totalCount.count <= 20) return; // 不需要清理
+
+        // 找到最早的完整对话轮次（用户消息 + AI回复）
+        const oldestMessages = db.prepare(`
+            SELECT id, role FROM chat_messages
+            WHERE session_id = ?
+            ORDER BY created_at ASC
+            LIMIT 2
+        `).all(sessionId);
+
+        // 如果最早的两条消息是用户+AI的组合，就删除它们
+        if (oldestMessages.length === 2 &&
+            oldestMessages[0].role === 'user' &&
+            oldestMessages[1].role === 'assistant') {
+
+            db.prepare(`
+                DELETE FROM chat_messages
+                WHERE id IN (?, ?)
+            `).run(oldestMessages[0].id, oldestMessages[1].id);
+
+            console.log(`清理了会话 ${sessionId} 的最早对话轮次`);
+        }
+    } catch (error) {
+        console.error('清理旧消息错误:', error);
+    }
+}
+
+// 生成会话标题的辅助函数
+function generateSessionTitle(firstMessage) {
+    if (!firstMessage) return "新建对话";
+
+    // 去除前后空格，取前10个字符
+    const title = firstMessage.trim().substring(0, 10);
+    return title || "新建对话";
+}
+
+// 发送聊天消息（支持会话管理）
+app.post('/api/chat/send', authenticateToken, async (req, res) => {
+    const { message, sessionId } = req.body;
+
     if (!message) {
         return res.status(400).json({ error: '消息内容不能为空' });
     }
-    
-    console.log('收到AI聊天请求:', message);
-    
-    const apiKey = process.env.ZHIPU_API_KEY;
-    
-    if (!apiKey) {
-        return res.json({
-            success: false,
-            reply: "智谱AI服务未配置。",
-            timestamp: new Date().toLocaleTimeString()
-        });
+
+    if (!sessionId) {
+        return res.status(400).json({ error: '会话ID不能为空' });
     }
-    
+
     try {
-        // 简单的提示词，只要求基本格式
-        const systemPrompt = "请用清晰的方式回答问题，适当使用段落和换行，让内容易于阅读。";
+        // 验证会话属于当前用户
+        const session = db.prepare(`
+            SELECT id, title FROM chat_sessions
+            WHERE id = ? AND user_id = ?
+        `).get(sessionId, req.user.id);
+
+        if (!session) {
+            return res.status(404).json({ error: '会话不存在或无权限访问' });
+        }
+
+        // 检查是否是该会话的第一条用户消息
+        const messageCount = db.prepare(`
+            SELECT COUNT(*) as count FROM chat_messages
+            WHERE session_id = ? AND role = 'user'
+        `).get(sessionId);
+
+        const isFirstMessage = messageCount.count === 0;
+
+        // 如果是第一条消息，更新会话标题
+        if (isFirstMessage && session.title === '新建对话') {
+            const newTitle = generateSessionTitle(message);
+            db.prepare(`
+                UPDATE chat_sessions
+                SET title = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `).run(newTitle, sessionId);
+        }
+
+        // 保存用户消息
+        db.prepare(`
+            INSERT INTO chat_messages (session_id, role, content)
+            VALUES (?, 'user', ?)
+        `).run(sessionId, message);
+
+        // 获取会话上下文（所有消息）
+        const contextMessages = db.prepare(`
+            SELECT role, content FROM chat_messages
+            WHERE session_id = ?
+            ORDER BY created_at ASC
+        `).all(sessionId);
+
+        // 准备AI API请求
+        const apiKey = process.env.ZHIPU_API_KEY;
+
+        if (!apiKey) {
+            // 保存系统回复
+            db.prepare(`
+                INSERT INTO chat_messages (session_id, role, content)
+                VALUES (?, 'assistant', ?)
+            `).run(sessionId, "智谱AI服务未配置。");
+
+            return res.json({
+                success: false,
+                reply: "智谱AI服务未配置。",
+                timestamp: new Date().toLocaleTimeString()
+            });
+        }
+
+        // 构建消息历史
+        const messages = [
+            {
+                role: "system",
+                content: "请用清晰的方式回答问题，适当使用段落和换行，让内容易于阅读。"
+            }
+        ];
+
+        // 添加上下文消息
+        contextMessages.forEach(msg => {
+            messages.push({
+                role: msg.role,
+                content: msg.content
+            });
+        });
 
         const requestBody = {
             model: "glm-4-flash",
-            messages: [
-                { 
-                    role: "system", 
-                    content: systemPrompt
-                },
-                { 
-                    role: "user", 
-                    content: message 
-                }
-            ],
+            messages: messages,
             max_tokens: 1500,
             temperature: 0.7,
             stream: false
         };
 
-        console.log('发送请求到智谱AI API...');
-        
+        console.log(`发送AI请求，会话 ${sessionId}，消息数: ${contextMessages.length}`);
+
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 20000);
-        
+
         const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
             method: 'POST',
             headers: {
@@ -538,27 +847,169 @@ app.post('/api/chat', async (req, res) => {
             body: JSON.stringify(requestBody),
             signal: controller.signal
         });
-        
+
         clearTimeout(timeoutId);
-        
+
         console.log('智谱AI API响应状态:', response.status);
-        
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('智谱AI错误:', errorText);
+
+            // 保存错误回复
+            db.prepare(`
+                INSERT INTO chat_messages (session_id, role, content)
+                VALUES (?, 'assistant', ?)
+            `).run(sessionId, "AI服务暂时不可用，请稍后重试。");
+
+            throw new Error(`智谱AI API错误 ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('智谱AI API响应成功');
+
+        if (data.choices && data.choices.length > 0 && data.choices[0].message) {
+            let aiReply = data.choices[0].message.content;
+
+            // 格式化回复内容
+            aiReply = simpleFormatAIResponse(aiReply);
+
+            // 保存AI回复
+            db.prepare(`
+                INSERT INTO chat_messages (session_id, role, content)
+                VALUES (?, 'assistant', ?)
+            `).run(sessionId, aiReply);
+
+            // 清理旧消息（如果需要）
+            cleanupOldMessages(sessionId);
+
+            // 更新会话时间
+            db.prepare(`
+                UPDATE chat_sessions
+                SET updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `).run(sessionId);
+
+            res.json({
+                success: true,
+                reply: aiReply,
+                timestamp: new Date().toLocaleTimeString(),
+                model: "glm-4-flash"
+            });
+        } else {
+            // 保存错误回复
+            db.prepare(`
+                INSERT INTO chat_messages (session_id, role, content)
+                VALUES (?, 'assistant', ?)
+            `).run(sessionId, "AI返回数据异常，请重试。");
+
+            throw new Error('智谱AI返回数据格式异常');
+        }
+
+    } catch (error) {
+        console.error('AI聊天错误:', error.message);
+
+        let errorMessage = "AI服务暂时不可用，请稍后重试。";
+        if (error.name === 'AbortError') {
+            errorMessage = "请求超时，请稍后重试。";
+        }
+
+        // 如果还没有保存错误回复，尝试保存
+        try {
+            if (sessionId) {
+                db.prepare(`
+                    INSERT INTO chat_messages (session_id, role, content)
+                    VALUES (?, 'assistant', ?)
+                `).run(sessionId, errorMessage);
+            }
+        } catch (dbError) {
+            console.error('保存错误回复失败:', dbError);
+        }
+
+        res.json({
+            success: false,
+            reply: errorMessage,
+            timestamp: new Date().toLocaleTimeString()
+        });
+    }
+});
+
+// === 兼容旧版AI学习伙伴API（不推荐使用）===
+app.post('/api/chat', async (req, res) => {
+    const { message } = req.body;
+
+    if (!message) {
+        return res.status(400).json({ error: '消息内容不能为空' });
+    }
+
+    console.log('收到旧版AI聊天请求（无会话管理）:', message);
+
+    const apiKey = process.env.ZHIPU_API_KEY;
+
+    if (!apiKey) {
+        return res.json({
+            success: false,
+            reply: "智谱AI服务未配置。",
+            timestamp: new Date().toLocaleTimeString()
+        });
+    }
+
+    try {
+        // 简单的提示词，只要求基本格式
+        const systemPrompt = "请用清晰的方式回答问题，适当使用段落和换行，让内容易于阅读。";
+
+        const requestBody = {
+            model: "glm-4-flash",
+            messages: [
+                {
+                    role: "system",
+                    content: systemPrompt
+                },
+                {
+                    role: "user",
+                    content: message
+                }
+            ],
+            max_tokens: 1500,
+            temperature: 0.7,
+            stream: false
+        };
+
+        console.log('发送请求到智谱AI API...');
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+        const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestBody),
+            signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+
+        console.log('智谱AI API响应状态:', response.status);
+
         if (!response.ok) {
             const errorText = await response.text();
             console.error('智谱AI错误:', errorText);
             throw new Error(`智谱AI API错误 ${response.status}`);
         }
-        
+
         const data = await response.json();
         console.log('智谱AI API响应成功');
-        
+
         if (data.choices && data.choices.length > 0 && data.choices[0].message) {
             let aiReply = data.choices[0].message.content;
-            
+
             // 简单格式化回复内容
             aiReply = simpleFormatAIResponse(aiReply);
-            
-            res.json({ 
+
+            res.json({
                 success: true,
                 reply: aiReply,
                 timestamp: new Date().toLocaleTimeString(),
@@ -567,10 +1018,10 @@ app.post('/api/chat', async (req, res) => {
         } else {
             throw new Error('智谱AI返回数据格式异常');
         }
-        
+
     } catch (error) {
         console.error('AI聊天错误:', error.message);
-        
+
         if (error.name === 'AbortError') {
             return res.json({
                 success: false,
@@ -578,8 +1029,8 @@ app.post('/api/chat', async (req, res) => {
                 timestamp: new Date().toLocaleTimeString()
             });
         }
-        
-        res.json({ 
+
+        res.json({
             success: false,
             reply: "AI服务暂时不可用",
             timestamp: new Date().toLocaleTimeString()
