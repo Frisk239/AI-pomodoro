@@ -88,6 +88,32 @@
                         <span class="stat-unit">分钟</span>  <!-- 统计单位 -->
                     </div>
                 </div>
+
+                <!-- 测试区域 -->
+                <div class="test-section">
+                    <h3>🧪 快速测试数据保存</h3>
+                    <div class="test-form">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="test-task-name">任务名称</label>
+                                <input type="text" id="test-task-name" placeholder="输入测试任务名称" value="测试任务">
+                            </div>
+                            <div class="form-group">
+                                <label for="test-duration">时长（分钟）</label>
+                                <input type="number" id="test-duration" placeholder="输入时长" value="25" min="1" max="240">
+                            </div>
+                            <div class="form-group">
+                                <label for="test-session-type">会话类型</label>
+                                <select id="test-session-type">
+                                    <option value="work">工作</option>
+                                    <option value="break">休息</option>
+                                </select>
+                            </div>
+                        </div>
+                        <button id="test-save-btn" class="btn btn-success">保存测试数据</button>
+                        <div id="test-result" class="test-result"></div>
+                    </div>
+                </div>
             </div>
         
             <!-- AI学习伙伴页面 -->
@@ -334,10 +360,7 @@
                                 <span class="stat-name">最长专注</span>
                                 <span class="stat-value" id="longest-session">0 分钟</span>
                             </div>
-                            <div class="quick-stat-item">
-                                <span class="stat-name">最佳时段</span>
-                                <span class="stat-value" id="best-hour">未记录</span>
-                            </div>
+
                             <div class="quick-stat-item">
                                 <span class="stat-name">连续天数</span>
                                 <span class="stat-value" id="streak-days">0 天</span>
@@ -363,25 +386,20 @@
                         <h3>🍅 专注时长分布</h3>
                         <canvas id="duration-chart" width="400" height="300"></canvas>
                     </div>
-            
+
+                    <div class="chart-card">
+                        <h3>⚡ 任务类型分布</h3>
+                        <canvas id="session-types-chart" width="400" height="300"></canvas>
+                    </div>
+
                     <div class="chart-card">
                         <h3>📊 时间趋势分析</h3>
                         <canvas id="trend-chart" width="400" height="300"></canvas>
                     </div>
-            
-                    <div class="chart-card full-width">
-                        <h3>⏰ 月度专注统计</h3>
-                        <canvas id="monthly-chart" width="800" height="300"></canvas>
-                    </div>
-            
+
                     <div class="chart-card">
-                        <h3>🌅 专注时段分布</h3>
-                        <canvas id="hourly-chart" width="400" height="300"></canvas>
-                    </div>
-            
-                    <div class="chart-card">
-                        <h3>📈 年度专注趋势</h3>
-                        <canvas id="yearly-chart" width="400" height="300"></canvas>
+                        <h3>📋 待办事项统计</h3>
+                        <canvas id="todos-chart" width="400" height="300"></canvas>
                     </div>
                 </div>
             </div>

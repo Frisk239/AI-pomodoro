@@ -44,6 +44,9 @@ class PomodoroTimer {
         
         // 图表实例
         this.charts = {};  // 存储图表实例
+
+        // 时间趋势图数据
+        this.trendChart = null;
         
         // DOM元素
         this.elements = {
@@ -95,14 +98,14 @@ class PomodoroTimer {
             todayMinutes: document.getElementById('today-minutes'),
             historyList: document.getElementById('history-list'),
             durationChart: document.getElementById('duration-chart'),
-            monthlyChart: document.getElementById('monthly-chart'),
+            trendChart: document.getElementById('trend-chart'),
             hourlyChart: document.getElementById('hourly-chart'),
             yearlyChart: document.getElementById('yearly-chart'),
             
             // 新增的统计徽章元素
             todaySessionsCount: document.getElementById('today-sessions-count'),
             totalSessionsCount: document.getElementById('total-sessions-count'),
-			
+
             chartAnalysisBtn: document.getElementById('chart-analysis-btn'),
 			chartsPage: document.getElementById('charts-page'),
 		    backToStatsBtn: document.getElementById('back-to-stats'),
@@ -111,9 +114,16 @@ class PomodoroTimer {
 			avgMinutes: document.getElementById('avg-minutes'),
 		    recordCount: document.getElementById('record-count'),
 		    longestSession: document.getElementById('longest-session'),
-		    bestHour: document.getElementById('best-hour'),
+
 		    streakDays: document.getElementById('streak-days'),
 		    completionRate: document.getElementById('completion-rate'),
+
+            // 测试相关元素
+            testTaskName: document.getElementById('test-task-name'),
+            testDuration: document.getElementById('test-duration'),
+            testSessionType: document.getElementById('test-session-type'),
+            testSaveBtn: document.getElementById('test-save-btn'),
+            testResult: document.getElementById('test-result'),
 
             // 个人中心元素
             userUsername: document.getElementById('user-username'),
@@ -324,6 +334,11 @@ class PomodoroTimer {
             this.elements.confirmRenameBtn.addEventListener('click', () => this.confirmRenameSession());
         }
 
+        // 测试功能事件
+        if (this.elements.testSaveBtn) {
+            this.elements.testSaveBtn.addEventListener('click', () => this.testSaveSession());
+        }
+
         // 页面切换时加载会话列表
         this.elements.navBtns.forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -359,17 +374,17 @@ class PomodoroTimer {
     // === 番茄钟核心功能 ===
     start() {
         if (this.isRunning) return;
-        
+
         this.isRunning = true;
         this.elements.startBtn.disabled = true;
         this.elements.pauseBtn.disabled = false;
-        
+
 		// 每秒更新一次进度条
-        this.updateProgressBar();
+        this.updateProgressRing();
         this.intervalId = setInterval(() => {
             this.timeLeft--;
             this.updateDisplay();
-            
+
             if (this.timeLeft <= 0) {
                 this.sessionComplete();
             }
@@ -448,9 +463,12 @@ class PomodoroTimer {
     }
     
 	// === 待办事项功能 ===
-	async loadTodos() {
+	    async loadTodos() {
 	    try {
-	        const response = await fetch(this.API_ENDPOINTS.TODOS);
+	        const response = await fetch(this.API_ENDPOINTS.TODOS, {
+	            method: 'GET',
+	            headers: this.authService.getAuthHeaders()
+	        });
 	        if (response.ok) {
 	            const result = await response.json();
 	            this.displayTodos(result.data);
@@ -485,9 +503,7 @@ class PomodoroTimer {
 	    try {
 	        const response = await fetch(this.API_ENDPOINTS.TODOS, {
 	            method: 'POST',
-	            headers: {
-	                'Content-Type': 'application/json',
-	            },
+	            headers: this.authService.getAuthHeaders(),
 	            body: JSON.stringify({
 	                text: text,
 	                duration: duration,
@@ -512,9 +528,12 @@ class PomodoroTimer {
     async loadStats() {
         try {
             const period = this.elements.statsPeriod.value;
-            const response = await fetch(`${this.API_ENDPOINTS.STATS}?period=${period}`);
+            const response = await fetch(`${this.API_ENDPOINTS.STATS}?period=${period}`, {
+                method: 'GET',
+                headers: this.authService.getAuthHeaders()
+            });
             const result = await response.json();
-            
+
             if (response.ok) {
                 this.displayStats(result.data, period);
                 this.updateChartsWithStats(result.data, period);
@@ -604,12 +623,10 @@ class PomodoroTimer {
         try {
             const response = await fetch(`${this.API_ENDPOINTS.TODOS}/${todoId}`, {
                 method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: this.authService.getAuthHeaders(),
                 body: JSON.stringify({ completed: true })
             });
-            
+
             if (response.ok) {
                 this.loadTodos();
                 this.showNotification('任务标记为完成', 'success');
@@ -619,15 +636,16 @@ class PomodoroTimer {
             this.showNotification('操作失败，请重试', 'error');
         }
     }
-    
+
     async deleteTodo(todoId) {
         if (!confirm('确定要删除这个待办事项吗？')) return;
-        
+
         try {
             const response = await fetch(`${this.API_ENDPOINTS.TODOS}/${todoId}`, {
-                method: 'DELETE'
+                method: 'DELETE',
+                headers: this.authService.getAuthHeaders()
             });
-            
+
             if (response.ok) {
                 this.loadTodos();
                 this.showNotification('待办事项已删除', 'success');
@@ -654,24 +672,79 @@ class PomodoroTimer {
         this.showNotification(`已设置为 ${duration} 分钟专注任务`, 'info');
     }
 	    // === 统计图表功能 ===
-	    initCharts() {
-	        // 销毁现有图表
-	        Object.values(this.charts).forEach(chart => {
-	            if (chart) chart.destroy();
-	        });
-	        
-	        // 获取当前周期
-	        const period = this.elements.statsPeriod.value;
-	        const chartData = this.generateChartData([], period);
-	        
-	        console.log('初始化图表，周期:', period, '数据:', chartData);
-	        
-	        // 初始化新图表
-	        this.charts.duration = this.createDurationChart(chartData.duration);
-	        this.charts.monthly = this.createMonthlyChart(chartData.time, chartData.labels);
-	        this.charts.hourly = this.createHourlyChart(chartData.hourly);
-	        this.charts.yearly = this.createYearlyChart(chartData.trend, this.getYearLabels(period));
-	    }
+		initCharts() {
+		    // 销毁现有图表
+		    Object.values(this.charts).forEach(chart => {
+		        if (chart) chart.destroy();
+		    });
+
+		    // 获取当前周期
+		    const period = this.elements.statsPeriod.value;
+		    console.log('初始化图表，周期:', period);
+
+		    // 初始化新图表（使用空数据）
+		    this.charts.duration = this.createDurationChart([0, 0, 0, 0]);
+		    this.charts.sessionTypes = this.createSessionTypesChart({work: 0, break: 0});
+		    this.charts.trendChart = this.createMonthlyChart([], []);
+		    this.charts.todos = this.createTodosChart({completed: 0, pending: 0});
+
+		    // 加载真实数据
+		    this.loadChartData(period);
+		}
+
+		// 加载图表数据
+		async loadChartData(period) {
+		    try {
+		        // 并行加载所有图表数据
+		        const [durationRes, sessionTypesRes, statsRes, todosRes] = await Promise.all([
+		            fetch(`${this.API_ENDPOINTS.STATS}/duration-distribution?period=${period}`, {
+		                headers: this.authService.getAuthHeaders()
+		            }),
+		            fetch(`${this.API_ENDPOINTS.STATS}/session-types?period=${period}`, {
+		                headers: this.authService.getAuthHeaders()
+		            }),
+		            fetch(`${this.API_ENDPOINTS.STATS}?period=${period}`, {
+		                headers: this.authService.getAuthHeaders()
+		            }),
+		            fetch(`${this.API_ENDPOINTS.STATS}/todos`, {
+		                headers: this.authService.getAuthHeaders()
+		            })
+		        ]);
+
+		        // 处理专注时长分布数据
+		        if (durationRes.ok) {
+		            const durationData = await durationRes.json();
+		            this.updateDurationChart(durationData.data);
+		        }
+
+		        // 处理任务类型分布数据
+		        if (sessionTypesRes.ok) {
+		            const sessionTypesData = await sessionTypesRes.json();
+		            this.updateSessionTypesChart(sessionTypesData.data);
+		        }
+
+		        // 处理时间趋势数据
+		        if (statsRes.ok) {
+		            const statsData = await statsRes.json();
+		            // 从统计数据中提取labels（日期）
+		            const labels = statsData.data.map(item => {
+		                const date = new Date(item.date);
+		                return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+		            });
+		            const data = statsData.data.map(item => item.total_minutes || 0);
+		            this.updateTimeChart(data, labels);
+		        }
+
+		        // 处理待办事项数据
+		        if (todosRes.ok) {
+		            const todosData = await todosRes.json();
+		            this.updateTodosChart(todosData.data);
+		        }
+
+		    } catch (error) {
+		        console.error('加载图表数据失败:', error);
+		    }
+		}
 	    
 	    createDurationChart(data = [12, 8, 4, 2]) {
 	        const ctx = this.elements.durationChart.getContext('2d');
@@ -703,9 +776,67 @@ class PomodoroTimer {
 	            }
 	        });
 	    }
+
+	    createSessionTypesChart(data = {work: 0, break: 0}) {
+	        const ctx = document.getElementById('session-types-chart').getContext('2d');
+	        return new Chart(ctx, {
+	            type: 'pie',
+	            data: {
+	                labels: ['工作时段', '休息时段'],
+	                datasets: [{
+	                    data: [data.work, data.break],
+	                    backgroundColor: [
+	                        '#ff6b6b',
+	                        '#4ecdc4'
+	                    ]
+	                }]
+	            },
+	            options: {
+	                responsive: true,
+	                plugins: {
+	                    legend: {
+	                        position: 'bottom'
+	                    },
+	                    title: {
+	                        display: true,
+	                        text: '任务类型分布'
+	                    }
+	                }
+	            }
+	        });
+	    }
+
+	    createTodosChart(data = {completed: 0, pending: 0}) {
+	        const ctx = document.getElementById('todos-chart').getContext('2d');
+	        return new Chart(ctx, {
+	            type: 'pie',
+	            data: {
+	                labels: ['已完成', '待完成'],
+	                datasets: [{
+	                    data: [data.completed, data.pending],
+	                    backgroundColor: [
+	                        '#4ecdc4',
+	                        '#ff6b6b'
+	                    ]
+	                }]
+	            },
+	            options: {
+	                responsive: true,
+	                plugins: {
+	                    legend: {
+	                        position: 'bottom'
+	                    },
+	                    title: {
+	                        display: true,
+	                        text: '待办事项统计'
+	                    }
+	                }
+	            }
+	        });
+	    }
 	    
 	    createMonthlyChart(data = [], labels = []) {
-	        const ctx = this.elements.monthlyChart.getContext('2d');
+	        const ctx = this.elements.trendChart.getContext('2d');
 	        return new Chart(ctx, {
 	            type: 'bar',
 	            data: {
@@ -843,9 +974,7 @@ class PomodoroTimer {
 
 	            const fetchPromise = fetch(this.API_ENDPOINTS.CHAT, {
 	                method: 'POST',
-	                headers: {
-	                    'Content-Type': 'application/json',
-	                },
+	                headers: this.authService.getAuthHeaders(),
 	                body: JSON.stringify({
 	                    message: message
 	                })
@@ -911,9 +1040,7 @@ class PomodoroTimer {
 	            
 	            const fetchPromise = fetch(this.API_ENDPOINTS.CHAT, {
 	                method: 'POST',
-	                headers: {
-	                    'Content-Type': 'application/json',
-	                },
+	                headers: this.authService.getAuthHeaders(),
 	                body: JSON.stringify({
 	                    message: message
 	                })
@@ -1186,20 +1313,18 @@ class PomodoroTimer {
 	    // === 原有的API调用 ===
 	    async saveSession() {
 	        const taskName = this.elements.taskInput.value.trim() || '未命名任务';
-	        
+
 	        try {
 	            const response = await fetch(this.API_ENDPOINTS.SESSIONS, {
 	                method: 'POST',
-	                headers: {
-	                    'Content-Type': 'application/json',
-	                },
+	                headers: this.authService.getAuthHeaders(),
 	                body: JSON.stringify({
 	                    taskName: taskName,
 	                    duration: this.workDuration / 60,
 	                    sessionType: 'work'
 	                })
 	            });
-	            
+
 	            const result = await response.json();
 	            if (response.ok) {
 	                console.log('记录保存成功:', result);
@@ -1212,12 +1337,86 @@ class PomodoroTimer {
 	            console.error('网络错误:', error);
 	        }
 	    }
+
+	    // 测试保存番茄钟记录
+	    async testSaveSession() {
+	        const taskName = this.elements.testTaskName.value.trim();
+	        const duration = parseInt(this.elements.testDuration.value);
+	        const sessionType = this.elements.testSessionType.value;
+
+	        // 验证输入
+	        if (!taskName) {
+	            this.showTestResult('请输入任务名称', 'error');
+	            return;
+	        }
+
+	        if (!duration || duration < 1) {
+	            this.showTestResult('请输入有效的时长', 'error');
+	            return;
+	        }
+
+	        // 显示加载状态
+	        this.elements.testSaveBtn.disabled = true;
+	        this.elements.testSaveBtn.textContent = '保存中...';
+	        this.showTestResult('正在保存测试数据...', 'info');
+
+	        try {
+	            const response = await fetch(this.API_ENDPOINTS.SESSIONS, {
+	                method: 'POST',
+	                headers: this.authService.getAuthHeaders(),
+	                body: JSON.stringify({
+	                    taskName: taskName,
+	                    duration: duration,
+	                    sessionType: sessionType
+	                })
+	            });
+
+	            const result = await response.json();
+
+	            if (response.ok) {
+	                console.log('测试数据保存成功:', result);
+	                this.showTestResult(`✅ 测试数据保存成功！<br>ID: ${result.data.id}<br>任务: ${result.data.task_name}<br>时长: ${result.data.duration}分钟<br>类型: ${result.data.session_type}`, 'success');
+
+	                // 刷新历史记录和统计
+	                this.loadHistory();
+	                this.loadStats();
+	            } else {
+	                console.error('测试数据保存失败:', result.error);
+	                this.showTestResult(`❌ 保存失败: ${result.error}`, 'error');
+	            }
+	        } catch (error) {
+	            console.error('测试保存网络错误:', error);
+	            this.showTestResult(`❌ 网络错误: ${error.message}`, 'error');
+	        } finally {
+	            // 恢复按钮状态
+	            this.elements.testSaveBtn.disabled = false;
+	            this.elements.testSaveBtn.textContent = '保存测试数据';
+	        }
+	    }
+
+	    // 显示测试结果
+	    showTestResult(message, type = 'info') {
+	        const resultDiv = this.elements.testResult;
+	        resultDiv.innerHTML = message;
+	        resultDiv.className = `test-result ${type}`;
+
+	        // 自动清除结果（除了成功消息）
+	        if (type !== 'success') {
+	            setTimeout(() => {
+	                resultDiv.innerHTML = '';
+	                resultDiv.className = 'test-result';
+	            }, 5000);
+	        }
+	    }
 	    
 	    async loadHistory() {
 	        try {
-	            const response = await fetch(this.API_ENDPOINTS.SESSIONS);
+	            const response = await fetch(this.API_ENDPOINTS.SESSIONS, {
+	                method: 'GET',
+	                headers: this.authService.getAuthHeaders()
+	            });
 	            const result = await response.json();
-	            
+
 	            if (response.ok) {
 	                this.displayHistory(result.data);
 	            } else {
@@ -1263,34 +1462,29 @@ class PomodoroTimer {
 	        });
 	    }
 	    
-	    async loadStats() {
-	        try {
-	            const response = await fetch(this.API_ENDPOINTS.STATS);
-	            const result = await response.json();
-	            
-	            if (response.ok) {
-	                this.displayStats(result.data);
-	            } else {
-	                console.error('加载统计失败:', result.error);
-	            }
-	        } catch (error) {
-	            console.error('网络错误:', error);
-	        }
-	    }
+
 	    
 	    // 更新显示统计方法
 	    displayStats(stats, period = 'week') {
+	        console.log('显示统计数据:', stats, '周期:', period);
+
 	        // 计算总统计
 	        const totalSessions = stats.reduce((sum, stat) => sum + (stat.total_sessions || 0), 0);
 	        const totalMinutes = stats.reduce((sum, stat) => sum + (stat.total_minutes || 0), 0);
-	        
+
+	        console.log('计算得总统计:', { totalSessions, totalMinutes });
+
 	        this.elements.totalSessions.textContent = totalSessions;
 	        this.elements.totalMinutes.textContent = totalMinutes;
-	        
-	        // 当日统计
-	        const today = new Date().toISOString().split('T')[0];
+
+	        // 当日统计 - 使用北京时间
+	        const now = new Date();
+	        const beijingTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+	        const today = beijingTime.toISOString().split('T')[0];
 	        const todayStat = stats.find(stat => stat.date === today);
-	        
+
+	        console.log('今日日期:', today, '今日统计:', todayStat);
+
 	        if (todayStat) {
 	            this.elements.todaySessions.textContent = todayStat.total_sessions || 0;
 	            this.elements.todayMinutes.textContent = todayStat.total_minutes || 0;
@@ -1298,88 +1492,249 @@ class PomodoroTimer {
 	            this.elements.todaySessions.textContent = '0';
 	            this.elements.todayMinutes.textContent = '0';
 	        }
-	        
+
 	        // 计算平均统计
 	        const daysCount = Math.max(stats.length, 1);
 	        this.elements.avgSessions.textContent = Math.round(totalSessions / daysCount);
 	        this.elements.avgMinutes.textContent = Math.round(totalMinutes / daysCount);
-	        
+
 	        // 更新快速统计
 	        this.updateQuickStats(stats);
 	    }
 	    
 	    // 更新快速统计
-	    updateQuickStats(stats) {
-	        // 最长专注时间
+	    async updateQuickStats(stats) {
+	        console.log('更新快速统计，数据:', stats);
+
+	        // 最长专注时间 - 从所有记录中找出最大值
 	        const longest = Math.max(...stats.map(stat => stat.total_minutes || 0), 0);
+	        console.log('最长专注时间:', longest);
 	        this.elements.longestSession.textContent = `${longest} 分钟`;
-	        
-	        // 连续天数（简化计算）
-	        const sortedDates = stats.map(stat => stat.date).sort();
-	        let streak = 1;
-	        for (let i = 1; i < sortedDates.length; i++) {
-	            const prevDate = new Date(sortedDates[i-1]);
-	            const currDate = new Date(sortedDates[i]);
-	            const diffTime = Math.abs(currDate - prevDate);
-	            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-	            if (diffDays === 1) streak++;
-	            else break;
+
+	        // 连续天数 - 计算实际连续专注天数
+	        const sortedDates = stats
+	            .filter(stat => stat.total_sessions > 0) // 只计算有专注记录的天数
+	            .map(stat => stat.date)
+	            .sort();
+
+	        let streak = 0;
+	        if (sortedDates.length > 0) {
+	            streak = 1; // 至少有1天
+	            for (let i = 1; i < sortedDates.length; i++) {
+	                const prevDate = new Date(sortedDates[i-1]);
+	                const currDate = new Date(sortedDates[i]);
+	                const diffTime = Math.abs(currDate - prevDate);
+	                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+	                if (diffDays === 1) {
+	                    streak++;
+	                } else {
+	                    // 如果不是连续的，从当前日期重新开始计算
+	                    streak = 1;
+	                }
+	            }
 	        }
+	        console.log('连续天数:', streak);
 	        this.elements.streakDays.textContent = `${streak} 天`;
-	        
-	        // 完成率（简化计算）
+
+	        // 完成率 - 有专注记录的天数占比
 	        const completion = stats.length > 0 ? Math.round((stats.filter(stat => stat.total_sessions > 0).length / stats.length) * 100) : 0;
+	        console.log('完成率:', completion);
 	        this.elements.completionRate.textContent = `${completion}%`;
-	        
-	        // 最佳时段（简化）
-	        this.elements.bestHour.textContent = '上午 9-11点';
+
+
 	    }
+
+	    // 获取专注时长分布数据
+	    async getDurationDistribution(period) {
+	        try {
+	            const response = await fetch(`${this.API_ENDPOINTS.STATS}/duration-distribution?period=${period}`);
+	            if (response.ok) {
+	                const result = await response.json();
+	                return result.data || [0, 0, 0, 0];
+	            } else {
+	                console.error('获取专注时长分布失败');
+	                return [0, 0, 0, 0];
+	            }
+	        } catch (error) {
+	            console.error('获取专注时长分布错误:', error);
+	            return [0, 0, 0, 0];
+	        }
+	    }
+
+	    // 获取时段分布数据
+	    async getHourlyDistribution(period) {
+	        try {
+	            const response = await fetch(`${this.API_ENDPOINTS.STATS}/hourly?period=${period}`);
+	            if (response.ok) {
+	                const result = await response.json();
+	                return result.data || [0, 0, 0, 0, 0, 0, 0, 0, 0];
+	            } else {
+	                console.error('获取时段分布失败');
+	                return [0, 0, 0, 0, 0, 0, 0, 0, 0];
+	            }
+	        } catch (error) {
+	            console.error('获取时段分布错误:', error);
+	            return [0, 0, 0, 0, 0, 0, 0, 0, 0];
+	        }
+	    }
+
+
 	    
 	    updateChartsWithStats(stats, period) {
 	        // 根据周期生成不同的图表数据
 	        const chartData = this.generateChartData(stats, period);
-	        
+
 	        // 更新所有图表
 	        this.updateDurationChart(chartData.duration);
-	        this.updateTimeChart(chartData.time);
+	        this.updateTimeChart(chartData.time, chartData.labels);
 	        this.updateTrendChart(chartData.trend);
-	        this.updateHourlyChart(chartData.hourly);
 	    }
 	    
 	    // 生成图表数据
 	    generateChartData(stats, period) {
-	        // 模拟数据生成 - 实际应该基于真实的stats数据
+	        console.log('生成图表数据，原始数据:', stats, '周期:', period);
+
+	        // 如果没有数据，返回空数据结构
+	        if (!stats || stats.length === 0) {
+	            console.log('无数据，返回空图表数据');
+	            return this.getEmptyChartData(period);
+	        }
+
+	        switch (period) {
+	            case 'week':
+	                return this.generateWeekChartData(stats);
+	            case 'month':
+	                return this.generateMonthChartData(stats);
+	            case 'year':
+	                return this.generateYearChartData(stats);
+	            default:
+	                return this.generateWeekChartData(stats);
+	        }
+	    }
+
+	    // 生成周视图图表数据
+	    async generateWeekChartData(stats) {
+	        // 专注时长分布（基于所有记录，需要从完整的历史记录计算）
+	        const duration = await this.getDurationDistribution('week');
+
+	        // 时间趋势（按日期的专注分钟数）
+	        const timeData = [];
+	        const trendData = [];
+	        const labels = [];
+
+	        // 按日期分组并排序
+	        const sortedStats = stats.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+	        sortedStats.forEach(stat => {
+	            const date = new Date(stat.date);
+	            const dayName = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getDay()];
+
+	            timeData.push(stat.total_minutes || 0);
+	            trendData.push(stat.total_minutes || 0);
+	            labels.push(dayName);
+	        });
+
+	        return {
+	            duration,
+	            time: timeData,
+	            trend: trendData,
+	            labels
+	        };
+	    }
+
+	    // 生成月视图图表数据
+	    async generateMonthChartData(stats) {
+	        // 专注时长分布
+	        const duration = await this.getDurationDistribution('month');
+
+	        // 时间趋势（按日期的专注分钟数）
+	        const timeData = [];
+	        const trendData = [];
+	        const labels = [];
+
+	        // 按日期分组并排序
+	        const sortedStats = stats.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+	        sortedStats.forEach(stat => {
+	            const date = new Date(stat.date);
+	            const dayLabel = `${date.getDate()}号`;
+
+	            timeData.push(stat.total_minutes || 0);
+	            trendData.push(stat.total_minutes || 0);
+	            labels.push(dayLabel);
+	        });
+
+	        return {
+	            duration,
+	            time: timeData,
+	            trend: trendData,
+	            labels
+	        };
+	    }
+
+	    // 生成年视图图表数据
+	    async generateYearChartData(stats) {
+	        // 专注时长分布
+	        const duration = await this.getDurationDistribution('year');
+
+	        // 时间趋势（按月份的专注分钟数）
+	        const timeData = [];
+	        const trendData = [];
+	        const labels = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+
+	        // 按月份分组
+	        const monthlyData = {};
+	        stats.forEach(stat => {
+	            const monthKey = stat.month || stat.date?.substring(0, 7); // 格式: YYYY-MM
+	            if (monthKey) {
+	                const monthIndex = parseInt(monthKey.split('-')[1]) - 1;
+	                monthlyData[monthIndex] = (monthlyData[monthIndex] || 0) + (stat.total_minutes || 0);
+	            }
+	        });
+
+	        // 填充12个月的数据
+	        for (let i = 0; i < 12; i++) {
+	            timeData.push(monthlyData[i] || 0);
+	            trendData.push(monthlyData[i] || 0);
+	        }
+
+	        return {
+	            duration,
+	            time: timeData,
+	            trend: trendData,
+	            labels
+	        };
+	    }
+
+	    // 获取空的图表数据结构
+	    getEmptyChartData(period) {
 	        switch (period) {
 	            case 'week':
 	                return {
-	                    duration: [15, 8, 5, 2], // 25min, 50min, 75min, 100min+
-	                    time: [120, 80, 150, 90, 180, 120, 160], // 一周7天
-	                    trend: [25, 30, 45, 35, 50, 40, 55], // 一周趋势
-	                    hourly: [5, 25, 40, 15, 35, 45, 20, 30, 10], // 时段分布
+	                    duration: [0, 0, 0, 0],
+	                    time: [0, 0, 0, 0, 0, 0, 0],
+	                    trend: [0, 0, 0, 0, 0, 0, 0],
 	                    labels: ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 	                };
 	            case 'month':
 	                return {
-	                    duration: [45, 25, 15, 8],
-	                    time: [1200, 800, 1500, 900, 1800, 1200, 1600, 1400, 1100, 1300, 900, 1000, 1200, 800, 1500, 900, 1800, 1200, 1600, 1400, 1100, 1300, 900, 1000, 1200, 800, 1500, 900, 1800, 1200],
-	                    trend: [800, 1200, 1500, 1800, 2200, 2500, 2800, 3000, 3200, 3500, 3800, 4000, 4200, 4500, 4800, 5000, 5200, 5500, 5800, 6000, 6200, 6500, 6800, 7000, 7200, 7500, 7800, 8000, 8200, 8500],
-	                    hourly: [8, 35, 50, 20, 45, 55, 25, 40, 15],
+	                    duration: [0, 0, 0, 0],
+	                    time: Array(30).fill(0),
+	                    trend: Array(30).fill(0),
 	                    labels: Array.from({length: 30}, (_, i) => `${i + 1}号`)
 	                };
 	            case 'year':
 	                return {
-	                    duration: [180, 100, 60, 30],
-	                    time: [1200, 800, 1500, 900, 1800, 1200, 1600, 1400, 1100, 1300, 900, 1000],
-	                    trend: [8000, 12000, 15000, 18000, 22000, 25000, 28000, 32000, 35000, 38000, 42000, 45000],
-	                    hourly: [10, 40, 55, 25, 50, 60, 30, 45, 20],
+	                    duration: [0, 0, 0, 0],
+	                    time: Array(12).fill(0),
+	                    trend: Array(12).fill(0),
 	                    labels: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
 	                };
 	            default:
 	                return {
-	                    duration: [12, 8, 4, 2],
-	                    time: [120, 80, 150, 90, 180, 120, 160],
-	                    trend: [25, 30, 45, 35, 50, 40, 55],
-	                    hourly: [5, 25, 40, 15, 35, 45, 20, 30, 10],
+	                    duration: [0, 0, 0, 0],
+	                    time: [0, 0, 0, 0, 0, 0, 0],
+	                    trend: [0, 0, 0, 0, 0, 0, 0],
 	                    labels: ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 	                };
 	        }
@@ -1394,10 +1749,13 @@ class PomodoroTimer {
 		}
 		
 		// 更新时间趋势图（月度统计）
-		updateTimeChart(data) {
-		    if (this.charts.monthly) {
-		        this.charts.monthly.data.datasets[0].data = data;
-		        this.charts.monthly.update();
+		updateTimeChart(data, labels) {
+		    if (this.charts.trendChart) {
+		        this.charts.trendChart.data.datasets[0].data = data;
+		        if (labels && labels.length > 0) {
+		            this.charts.trendChart.data.labels = labels;
+		        }
+		        this.charts.trendChart.update();
 		    }
 		}
 		
@@ -1409,29 +1767,22 @@ class PomodoroTimer {
 		    }
 		}
 		
-		// 更新时段分布图
-		updateHourlyChart(data) {
-		    if (this.charts.hourly) {
-		        this.charts.hourly.data.datasets[0].data = data;
-		        this.charts.hourly.update();
+
+
+		// 更新任务类型分布图
+		updateSessionTypesChart(data) {
+		    if (this.charts.sessionTypes) {
+		        this.charts.sessionTypes.data.datasets[0].data = [data.work, data.break];
+		        this.charts.sessionTypes.update();
 		    }
 		}
-		
-		initCharts() {
-		    // 销毁现有图表
-		    Object.values(this.charts).forEach(chart => {
-		        if (chart) chart.destroy();
-		    });
-		    
-		    // 获取当前周期
-		    const period = this.elements.statsPeriod.value;
-		    const chartData = this.generateChartData([], period);
-		    
-		    // 初始化新图表
-		    this.charts.duration = this.createDurationChart(chartData.duration);
-		    this.charts.monthly = this.createMonthlyChart(chartData.time, chartData.labels);
-		    this.charts.hourly = this.createHourlyChart(chartData.hourly);
-		    this.charts.yearly = this.createYearlyChart(chartData.trend, this.getYearLabels(period));
+
+		// 更新待办事项统计图
+		updateTodosChart(data) {
+		    if (this.charts.todos) {
+		        this.charts.todos.data.datasets[0].data = [data.completed, data.pending];
+		        this.charts.todos.update();
+		    }
 		}
 		
 		// 创建图表的方法需要接受参数
@@ -1465,9 +1816,9 @@ class PomodoroTimer {
 		        }
 		    });
 		}
-		
+
 		createMonthlyChart(data = [], labels = []) {
-		    const ctx = this.elements.monthlyChart.getContext('2d');
+		    const ctx = this.elements.trendChart.getContext('2d');
 		    return new Chart(ctx, {
 		        type: 'bar',
 		        data: {
@@ -1504,7 +1855,7 @@ class PomodoroTimer {
 		        }
 		    });
 		}
-		
+
 		createHourlyChart(data = []) {
 		    const ctx = this.elements.hourlyChart.getContext('2d');
 		    return new Chart(ctx, {
@@ -1546,7 +1897,7 @@ class PomodoroTimer {
 		        }
 		    });
 		}
-		
+
 		createYearlyChart(data = [], labels = []) {
 		    const ctx = this.elements.yearlyChart.getContext('2d');
 		    return new Chart(ctx, {
@@ -1573,7 +1924,7 @@ class PomodoroTimer {
 		            scales: {
 		                y: {
 		                    beginAtZero: true,
-		                    title: {
+		                        title: {
 		                        display: true,
 		                        text: '分钟'
 		                    }
@@ -1582,7 +1933,7 @@ class PomodoroTimer {
 		        }
 		    });
 		}
-		
+
 		// 辅助方法：获取时间单位标签
 		getTimeUnit() {
 		    const period = this.elements.statsPeriod.value;
@@ -1593,7 +1944,7 @@ class PomodoroTimer {
 		        default: return '时间';
 		    }
 		}
-		
+
 		// 辅助方法：获取年份标签
 		getYearLabels(period) {
 		    if (period === 'year') {

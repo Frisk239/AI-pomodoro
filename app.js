@@ -23,6 +23,24 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
+// === JWT认证中间件 ===
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+    if (!token) {
+        return res.status(401).json({ error: '访问令牌缺失' });
+    }
+
+    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+        if (err) {
+            return res.status(403).json({ error: '无效的访问令牌' });
+        }
+        req.user = user;
+        next();
+    });
+};
+
 // 存储在线用户和自习室
 const onlineUsers = new Map();
 const studyRooms = new Map();
@@ -111,14 +129,18 @@ io.on('connection', (socket) => {
     });
 });
 
-// === 原有的番茄钟API路由 ===
 
-// 1. 获取所有番茄钟记录
-app.get('/api/sessions', (req, res) => {
+
+
+
+// === 番茄钟API路由（需要认证）===
+
+// 1. 获取当前用户的番茄钟记录
+app.get('/api/sessions', authenticateToken, (req, res) => {
     try {
-        const stmt = db.prepare('SELECT * FROM pomodoro_sessions ORDER BY completed_at DESC');
-        const rows = stmt.all();
-        
+        const stmt = db.prepare('SELECT * FROM pomodoro_sessions WHERE user_id = ? ORDER BY completed_at DESC');
+        const rows = stmt.all(req.user.id);
+
         res.json({
             message: '成功获取番茄钟记录',
             data: rows
@@ -129,28 +151,28 @@ app.get('/api/sessions', (req, res) => {
 });
 
 // 2. 保存新的番茄钟记录
-app.post('/api/sessions', (req, res) => {
+app.post('/api/sessions', authenticateToken, (req, res) => {
     const { taskName, duration, sessionType = 'work' } = req.body;
-    
+
     if (!taskName || !duration) {
         return res.status(400).json({ error: '任务名称和时长是必填项' });
     }
-    
+
     try {
         const now = new Date();
         const beijingTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
         const formattedTime = beijingTime.toISOString().slice(0, 19).replace('T', ' ');
-        
+
         const stmt = db.prepare(`
-            INSERT INTO pomodoro_sessions (task_name, duration, session_type, completed_at) 
-            VALUES (?, ?, ?, ?)
+            INSERT INTO pomodoro_sessions (user_id, task_name, duration, session_type, completed_at)
+            VALUES (?, ?, ?, ?, ?)
         `);
-        
-        const result = stmt.run(taskName, duration, sessionType, formattedTime);
-        
+
+        const result = stmt.run(req.user.id, taskName, duration, sessionType, formattedTime);
+
         const getStmt = db.prepare('SELECT * FROM pomodoro_sessions WHERE id = ?');
         const newRecord = getStmt.get(result.lastInsertRowid);
-        
+
         res.json({
             message: '番茄钟记录保存成功',
             data: newRecord
@@ -160,70 +182,308 @@ app.post('/api/sessions', (req, res) => {
     }
 });
 
-// 3. 获取统计信息
-app.get('/api/stats', (req, res) => {
+// 3. 获取当前用户的统计信息
+app.get('/api/stats', authenticateToken, (req, res) => {
     const period = req.query.period || 'week';
-    
+
     try {
         let query, params = [];
-        
+
         switch (period) {
             case 'week':
                 query = `
-                    SELECT 
+                    SELECT
                         COUNT(*) as total_sessions,
                         SUM(duration) as total_minutes,
                         DATE(completed_at) as date
-                    FROM pomodoro_sessions 
-                    WHERE completed_at >= date('now', '-7 days')
+                    FROM pomodoro_sessions
+                    WHERE user_id = ? AND completed_at >= date('now', '-7 days')
                     GROUP BY DATE(completed_at)
                     ORDER BY date DESC
                 `;
+                params = [req.user.id];
                 break;
             case 'month':
                 query = `
-                    SELECT 
+                    SELECT
                         COUNT(*) as total_sessions,
                         SUM(duration) as total_minutes,
                         DATE(completed_at) as date
-                    FROM pomodoro_sessions 
-                    WHERE completed_at >= date('now', '-30 days')
+                    FROM pomodoro_sessions
+                    WHERE user_id = ? AND completed_at >= date('now', '-30 days')
                     GROUP BY DATE(completed_at)
                     ORDER BY date DESC
                 `;
+                params = [req.user.id];
                 break;
             case 'year':
                 query = `
-                    SELECT 
+                    SELECT
                         COUNT(*) as total_sessions,
                         SUM(duration) as total_minutes,
                         strftime('%Y-%m', completed_at) as month
-                    FROM pomodoro_sessions 
-                    WHERE completed_at >= date('now', '-1 year')
+                    FROM pomodoro_sessions
+                    WHERE user_id = ? AND completed_at >= date('now', '-1 year')
                     GROUP BY strftime('%Y-%m', completed_at)
                     ORDER BY month DESC
                 `;
+                params = [req.user.id];
                 break;
             default:
                 query = `
-                    SELECT 
+                    SELECT
                         COUNT(*) as total_sessions,
                         SUM(duration) as total_minutes,
                         DATE(completed_at) as date
-                    FROM pomodoro_sessions 
+                    FROM pomodoro_sessions
+                    WHERE user_id = ?
                     GROUP BY DATE(completed_at)
                     ORDER BY date DESC
                     LIMIT 7
                 `;
+                params = [req.user.id];
         }
-        
+
         const stmt = db.prepare(query);
         const rows = stmt.all(params);
-        
+
         res.json({
             message: '统计信息获取成功',
             data: rows,
             period: period
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 3.1 获取专注时长分布统计
+app.get('/api/stats/duration-distribution', authenticateToken, (req, res) => {
+    const period = req.query.period || 'week';
+
+    try {
+        let dateFilter = '';
+
+        switch (period) {
+            case 'week':
+                dateFilter = "completed_at >= date('now', '-7 days')";
+                break;
+            case 'month':
+                dateFilter = "completed_at >= date('now', '-30 days')";
+                break;
+            case 'year':
+                dateFilter = "completed_at >= date('now', '-1 year')";
+                break;
+            default:
+                dateFilter = "1=1"; // 所有记录
+        }
+
+        // 统计不同时长区间的专注次数
+        const query = `
+            SELECT
+                CASE
+                    WHEN duration <= 25 THEN '25min'
+                    WHEN duration <= 50 THEN '50min'
+                    WHEN duration <= 75 THEN '75min'
+                    ELSE '100min+'
+                END as duration_range,
+                COUNT(*) as count
+            FROM pomodoro_sessions
+            WHERE user_id = ? AND ${dateFilter}
+            GROUP BY
+                CASE
+                    WHEN duration <= 25 THEN '25min'
+                    WHEN duration <= 50 THEN '50min'
+                    WHEN duration <= 75 THEN '75min'
+                    ELSE '100min+'
+                END
+        `;
+
+        const stmt = db.prepare(query);
+        const rows = stmt.all(req.user.id);
+
+        // 转换为前端期望的格式 [25min_count, 50min_count, 75min_count, 100min+_count]
+        const distribution = [0, 0, 0, 0]; // [25分钟, 50分钟, 75分钟, 100分钟+]
+
+        rows.forEach(row => {
+            switch (row.duration_range) {
+                case '25min':
+                    distribution[0] = row.count;
+                    break;
+                case '50min':
+                    distribution[1] = row.count;
+                    break;
+                case '75min':
+                    distribution[2] = row.count;
+                    break;
+                case '100min+':
+                    distribution[3] = row.count;
+                    break;
+            }
+        });
+
+        res.json({
+            message: '专注时长分布获取成功',
+            data: distribution,
+            period: period
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 3.2 获取时段分布统计
+app.get('/api/stats/hourly', authenticateToken, (req, res) => {
+    const period = req.query.period || 'week';
+
+    try {
+        let dateFilter = '';
+
+        switch (period) {
+            case 'week':
+                dateFilter = "completed_at >= date('now', '-7 days')";
+                break;
+            case 'month':
+                dateFilter = "completed_at >= date('now', '-30 days')";
+                break;
+            case 'year':
+                dateFilter = "completed_at >= date('now', '-1 year')";
+                break;
+            default:
+                dateFilter = "1=1"; // 所有记录
+        }
+
+        // 按小时统计专注次数（北京时间）
+        const query = `
+            SELECT
+                strftime('%H', datetime(completed_at, '+8 hours')) as hour,
+                COUNT(*) as count
+            FROM pomodoro_sessions
+            WHERE user_id = ? AND ${dateFilter}
+            GROUP BY strftime('%H', datetime(completed_at, '+8 hours'))
+            ORDER BY hour
+        `;
+
+        const stmt = db.prepare(query);
+        const rows = stmt.all(req.user.id);
+
+        // 初始化24小时的数据，默认为0
+        const hourlyData = new Array(24).fill(0);
+
+        // 填充实际数据
+        rows.forEach(row => {
+            const hour = parseInt(row.hour);
+            if (hour >= 0 && hour < 24) {
+                hourlyData[hour] = row.count;
+            }
+        });
+
+        // 前端只需要9个时段的数据：6点,8点,10点,12点,14点,16点,18点,20点,22点
+        const frontendHours = [6, 8, 10, 12, 14, 16, 18, 20, 22];
+        const frontendData = frontendHours.map(hour => hourlyData[hour]);
+
+        res.json({
+            message: '时段分布获取成功',
+            data: frontendData,
+            period: period,
+            hours: frontendHours
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 3.3 获取任务类型分布统计
+app.get('/api/stats/session-types', authenticateToken, (req, res) => {
+    const period = req.query.period || 'week';
+
+    try {
+        let dateFilter = '';
+
+        switch (period) {
+            case 'week':
+                dateFilter = "completed_at >= date('now', '-7 days')";
+                break;
+            case 'month':
+                dateFilter = "completed_at >= date('now', '-30 days')";
+                break;
+            case 'year':
+                dateFilter = "completed_at >= date('now', '-1 year')";
+                break;
+            default:
+                dateFilter = "1=1"; // 所有记录
+        }
+
+        // 统计工作和休息会话的数量
+        const query = `
+            SELECT
+                session_type,
+                COUNT(*) as count
+            FROM pomodoro_sessions
+            WHERE user_id = ? AND ${dateFilter}
+            GROUP BY session_type
+        `;
+
+        const stmt = db.prepare(query);
+        const rows = stmt.all(req.user.id);
+
+        // 转换为前端期望的格式
+        const distribution = {
+            work: 0,
+            break: 0
+        };
+
+        rows.forEach(row => {
+            if (row.session_type === 'work') {
+                distribution.work = row.count;
+            } else if (row.session_type === 'break') {
+                distribution.break = row.count;
+            }
+        });
+
+        res.json({
+            message: '任务类型分布获取成功',
+            data: distribution,
+            period: period
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 3.4 获取待办事项统计
+app.get('/api/stats/todos', authenticateToken, (req, res) => {
+    try {
+        // 统计待办事项的完成情况
+        const query = `
+            SELECT
+                completed,
+                COUNT(*) as count
+            FROM todos
+            WHERE user_id = ?
+            GROUP BY completed
+        `;
+
+        const stmt = db.prepare(query);
+        const rows = stmt.all(req.user.id);
+
+        // 转换为前端期望的格式
+        const stats = {
+            completed: 0,
+            pending: 0
+        };
+
+        rows.forEach(row => {
+            if (row.completed) {
+                stats.completed = row.count;
+            } else {
+                stats.pending = row.count;
+            }
+        });
+
+        res.json({
+            message: '待办事项统计获取成功',
+            data: stats
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -243,24 +503,6 @@ app.delete('/api/sessions/:id', (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-
-// === JWT认证中间件 ===
-const authenticateToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
-
-    if (!token) {
-        return res.status(401).json({ error: '访问令牌缺失' });
-    }
-
-    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-        if (err) {
-            return res.status(403).json({ error: '无效的访问令牌' });
-        }
-        req.user = user;
-        next();
-    });
-};
 
 // === 用户认证API ===
 
@@ -1059,24 +1301,12 @@ function simpleFormatAIResponse(content) {
     return formatted.trim();
 }
 
-// 5. 获取所有待办事项
-app.get('/api/todos', (req, res) => {
+// 5. 获取当前用户的待办事项
+app.get('/api/todos', authenticateToken, (req, res) => {
     try {
-        // 检查待办事项表是否存在，不存在则创建
-        const checkTable = db.prepare(`
-            CREATE TABLE IF NOT EXISTS todos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                text TEXT NOT NULL,
-                duration INTEGER NOT NULL,
-                completed BOOLEAN DEFAULT FALSE,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-        checkTable.run();
-        
-        const stmt = db.prepare('SELECT * FROM todos ORDER BY completed, created_at DESC');
-        const rows = stmt.all();
-        
+        const stmt = db.prepare('SELECT * FROM todos WHERE user_id = ? ORDER BY completed, created_at DESC');
+        const rows = stmt.all(req.user.id);
+
         res.json({
             message: '成功获取待办事项',
             data: rows
@@ -1087,24 +1317,24 @@ app.get('/api/todos', (req, res) => {
 });
 
 // 6. 添加新的待办事项
-app.post('/api/todos', (req, res) => {
+app.post('/api/todos', authenticateToken, (req, res) => {
     const { text, duration, completed = false } = req.body;
-    
+
     if (!text || !duration) {
         return res.status(400).json({ error: '事项内容和时长是必填项' });
     }
-    
+
     try {
         const stmt = db.prepare(`
-            INSERT INTO todos (text, duration, completed) 
-            VALUES (?, ?, ?)
+            INSERT INTO todos (user_id, text, duration, completed)
+            VALUES (?, ?, ?, ?)
         `);
-        
-        const result = stmt.run(text, duration, completed ? 1 : 0);
-        
+
+        const result = stmt.run(req.user.id, text, duration, completed ? 1 : 0);
+
         const getStmt = db.prepare('SELECT * FROM todos WHERE id = ?');
         const newTodo = getStmt.get(result.lastInsertRowid);
-        
+
         res.json({
             message: '待办事项添加成功',
             data: newTodo
@@ -1115,30 +1345,36 @@ app.post('/api/todos', (req, res) => {
 });
 
 // 7. 更新待办事项状态
-app.put('/api/todos/:id', (req, res) => {
+app.put('/api/todos/:id', authenticateToken, (req, res) => {
     const id = req.params.id;
     const { completed, text, duration } = req.body;
-    
+
     try {
+        // 首先验证待办事项属于当前用户
+        const todoCheck = db.prepare('SELECT id FROM todos WHERE id = ? AND user_id = ?').get(id, req.user.id);
+        if (!todoCheck) {
+            return res.status(404).json({ error: '待办事项不存在或无权限访问' });
+        }
+
         let stmt, result;
-        
+
         if (typeof completed !== 'undefined') {
-            stmt = db.prepare('UPDATE todos SET completed = ? WHERE id = ?');
-            result = stmt.run(completed ? 1 : 0, id);
+            stmt = db.prepare('UPDATE todos SET completed = ? WHERE id = ? AND user_id = ?');
+            result = stmt.run(completed ? 1 : 0, id, req.user.id);
         } else if (text && duration) {
-            stmt = db.prepare('UPDATE todos SET text = ?, duration = ? WHERE id = ?');
-            result = stmt.run(text, duration, id);
+            stmt = db.prepare('UPDATE todos SET text = ?, duration = ? WHERE id = ? AND user_id = ?');
+            result = stmt.run(text, duration, id, req.user.id);
         } else {
             return res.status(400).json({ error: '缺少必要参数' });
         }
-        
+
         if (result.changes === 0) {
             return res.status(404).json({ error: '待办事项不存在' });
         }
-        
+
         const getStmt = db.prepare('SELECT * FROM todos WHERE id = ?');
         const updatedTodo = getStmt.get(id);
-        
+
         res.json({
             message: '待办事项更新成功',
             data: updatedTodo
@@ -1149,17 +1385,23 @@ app.put('/api/todos/:id', (req, res) => {
 });
 
 // 8. 删除待办事项
-app.delete('/api/todos/:id', (req, res) => {
+app.delete('/api/todos/:id', authenticateToken, (req, res) => {
     const id = req.params.id;
-    
+
     try {
-        const stmt = db.prepare('DELETE FROM todos WHERE id = ?');
-        const result = stmt.run(id);
-        
+        // 首先验证待办事项属于当前用户
+        const todoCheck = db.prepare('SELECT id FROM todos WHERE id = ? AND user_id = ?').get(id, req.user.id);
+        if (!todoCheck) {
+            return res.status(404).json({ error: '待办事项不存在或无权限访问' });
+        }
+
+        const stmt = db.prepare('DELETE FROM todos WHERE id = ? AND user_id = ?');
+        const result = stmt.run(id, req.user.id);
+
         if (result.changes === 0) {
             return res.status(404).json({ error: '待办事项不存在' });
         }
-        
+
         res.json({ message: '待办事项删除成功' });
     } catch (err) {
         res.status(500).json({ error: err.message });
